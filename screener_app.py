@@ -55,7 +55,6 @@ with st.sidebar.form("filter_form"):
     max_below_52h = st.slider("Max % Below 52-Week High (0% to X%):", min_value=0, max_value=50, value=30, step=5)
 
     st.header("5. Display Settings")
-    # Increased ceiling to 3000 to prevent truncating eligible ₹1000+ Cr market cap stocks
     max_results = st.slider("Max Results to Fetch:", min_value=500, max_value=3000, value=2500, step=250)
     
     # Dedicated Apply Button
@@ -69,7 +68,7 @@ def fetch_screener_data(exchanges, min_mcap, min_adr_val, limit_rows):
     # Convert ₹ Crores to raw INR (1 Crore = 10,000,000 INR)
     min_mcap_inr = min_mcap * 10_000_000
     
-    # Push Market Cap AND ADR % directly into server-side .where() to prevent truncation
+    # Fetch data + include 'type' to filter out REITs/InvITs/ETFs
     q = (Query()
          .set_markets('india')
          .select(
@@ -87,7 +86,8 @@ def fetch_screener_data(exchanges, min_mcap, min_adr_val, limit_rows):
              'price_52_week_low',
              'sector',
              'industry',
-             'exchange'
+             'exchange',
+             'type'
          )
          .where(
              col('market_cap_basic') >= min_mcap_inr,
@@ -121,7 +121,15 @@ else:
     # 1. Filter Exchanges exactly
     df = df[df['exchange'].isin(exchange_choice)]
     
-    # 2. Filter Sector (if user selected specific sectors)
+    # 2. Filter for COMMON STOCKS ONLY (removes REITs, InvITs, ETFs)
+    if 'type' in df.columns:
+        df = df[df['type'] == 'stock']
+    
+    # 3. SMART DEDUPLICATION (Removes duplicate BSE rows for stocks already listed on NSE)
+    # Since df is sorted by volume descending, keep='first' keeps the high-volume NSE symbol!
+    df = df.drop_duplicates(subset=['name'], keep='first')
+    
+    # 4. Filter Sector (if user selected specific sectors)
     if sector_choice:
         df = df[df['sector'].isin(sector_choice)]
     
@@ -156,7 +164,6 @@ else:
         df = df[pct_above_low >= min_above_52l]
         
     # D. Price Below 52-Week High by 0% to Y% (<= 30%)
-    # Removed the >= 0 floor so stocks making new 52-week highs are never accidentally dropped!
     if 'price_52_week_high' in df.columns:
         pct_below_high = ((df['price_52_week_high'] - df['close']) / df['price_52_week_high']) * 100
         df = df[pct_below_high <= max_below_52h]
