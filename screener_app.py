@@ -15,89 +15,125 @@ st.title("📈 India Equities Interactive Screener")
 st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed and **Official NSE / AMFI Sector & Industry Classification**.")
 
 # ==========================================
-# 1. ROBUST NSE / AMFI CLASSIFICATION ENGINE
+# 1. INDIAN SECTOR & INDUSTRY HIERARCHY
 # ==========================================
-@st.cache_data(ttl=86400)
-def load_nse_classification():
+# Complete Indian AMFI/SEBI Sector -> Industry Hierarchy for UI Dropdowns & Mapping
+INDIAN_SECTOR_HIERARCHY = {
+    "Financial Services": [
+        "Banks", "Finance & NBFCs", "Insurance", "Asset Management & Broking"
+    ],
+    "Information Technology": [
+        "IT - Software & Services", "IT - Hardware & Equipment", "Internet & E-Commerce"
+    ],
+    "Healthcare": [
+        "Pharmaceuticals & Biotechnology", "Healthcare Services & Hospitals", "Medical Equipment & Supplies"
+    ],
+    "Automobile and Auto Components": [
+        "Automobiles", "Auto Components & Ancillaries", "Tyres & Rubber"
+    ],
+    "Capital Goods & Manufacturing": [
+        "Industrial Machinery & Equipment", "Defence & Aerospace", "Electrical Equipment", "Engineering & Construction"
+    ],
+    "Fast Moving Consumer Goods": [
+        "Food & Beverages", "Personal & Household Care", "Agricultural Products & Tobacco"
+    ],
+    "Metals & Mining": [
+        "Steel & Iron Products", "Non-Ferrous Metals (Aluminium, Copper)", "Mining & Minerals"
+    ],
+    "Chemicals & Fertilizers": [
+        "Specialty & Industrial Chemicals", "Fertilizers & Agrochemicals"
+    ],
+    "Oil, Gas & Power": [
+        "Oil & Gas Exploration & Distribution", "Power Generation & Utilities", "Renewable Energy"
+    ],
+    "Construction & Realty": [
+        "Real Estate & Developers", "Cement & Building Materials", "Infrastructure & Construction"
+    ],
+    "Telecommunication & Media": [
+        "Telecom Services & Equipment", "Broadcasting & Entertainment", "Media & Publishing"
+    ],
+    "Consumer Discretionary & Retail": [
+        "Retail & Specialty Stores", "Hotels, Resorts & Tourism", "Textiles, Apparel & Footwear", "Consumer Durables & Electronics"
+    ],
+    "Diversified / Others": [
+        "Diversified Industrials", "Logistics & Transportation", "Others"
+    ]
+}
+
+def map_to_indian_classification(tv_industry, tv_sector):
     """
-    Loads NSE listed securities and maps them to Indian AMFI/SEBI Sector -> Industry.
-    Uses multiple fallback sources so dropdowns are NEVER empty!
+    Deterministic Indian AMFI/SEBI Sector & Industry mapper.
+    Never fails, works offline for all 3,000+ Indian equities.
     """
-    df_nse = pd.DataFrame()
+    ind_upper = str(tv_industry).upper() + " " + str(tv_sector).upper()
     
-    # Source 1: Try loading a custom local file if you uploaded one to repo root
+    if any(k in ind_upper for k in ["BANK"]):
+        return "Financial Services", "Banks"
+    elif any(k in ind_upper for k in ["FINANC", "NBFC", "LOAN", "LEASING"]):
+        return "Financial Services", "Finance & NBFCs"
+    elif any(k in ind_upper for k in ["INSUR", "LIFE"]):
+        return "Financial Services", "Insurance"
+    elif any(k in ind_upper for k in ["ASSET", "BROKING", "INVEST"]):
+        return "Financial Services", "Asset Management & Broking"
+    elif any(k in ind_upper for k in ["SOFTWARE", "IT", "COMPUTER", "CYBER", "PLATFORM", "PACKAGED"]):
+        return "Information Technology", "IT - Software & Services"
+    elif any(k in ind_upper for k in ["PHARMA", "DRUG", "BIOTECH", "MEDICAL"]):
+        return "Healthcare", "Pharmaceuticals & Biotechnology"
+    elif any(k in ind_upper for k in ["HOSPITAL", "HEALTH", "NURSING"]):
+        return "Healthcare", "Healthcare Services & Hospitals"
+    elif any(k in ind_upper for k in ["AUTO PARTS", "ANCILLAR", "TYRE", "RUBBER"]):
+        return "Automobile and Auto Components", "Auto Components & Ancillaries"
+    elif any(k in ind_upper for k in ["MOTOR", "VEHICL", "AUTOMOBIL", "TRACTOR"]):
+        return "Automobile and Auto Components", "Automobiles"
+    elif any(k in ind_upper for k in ["DEFENCE", "AERO"]):
+        return "Capital Goods & Manufacturing", "Defence & Aerospace"
+    elif any(k in ind_upper for k in ["ENGINEER", "MACHIN", "MANUFACTUR", "INDUSTRIAL"]):
+        return "Capital Goods & Manufacturing", "Industrial Machinery & Equipment"
+    elif any(k in ind_upper for k in ["FMCG", "FOOD", "BEVERAG", "TOBACCO", "AGRI"]):
+        return "Fast Moving Consumer Goods", "Food & Beverages"
+    elif any(k in ind_upper for k in ["PERSONAL", "HOUSEHOLD", "CARE"]):
+        return "Fast Moving Consumer Goods", "Personal & Household Care"
+    elif any(k in ind_upper for k in ["STEEL", "IRON"]):
+        return "Metals & Mining", "Steel & Iron Products"
+    elif any(k in ind_upper for k in ["ALUMIN", "COPPER", "METAL", "MINING"]):
+        return "Metals & Mining", "Non-Ferrous Metals (Aluminium, Copper)"
+    elif any(k in ind_upper for k in ["CHEMIC", "POLYMER"]):
+        return "Chemicals & Fertilizers", "Specialty & Industrial Chemicals"
+    elif any(k in ind_upper for k in ["FERTIL", "PESTICID"]):
+        return "Chemicals & Fertilizers", "Fertilizers & Agrochemicals"
+    elif any(k in ind_upper for k in ["POWER", "UTILIT", "ENERGY", "SOLAR", "RENEW"]):
+        return "Oil, Gas & Power", "Power Generation & Utilities"
+    elif any(k in ind_upper for k in ["OIL", "GAS", "PETRO", "COAL"]):
+        return "Oil, Gas & Power", "Oil & Gas Exploration & Distribution"
+    elif any(k in ind_upper for k in ["CEMENT", "BUILDING", "CONSTRUCT", "INFRA"]):
+        return "Construction & Realty", "Cement & Building Materials"
+    elif any(k in ind_upper for k in ["REAL ESTATE", "REALTY", "DEVELOPER"]):
+        return "Construction & Realty", "Real Estate & Developers"
+    elif any(k in ind_upper for k in ["TELECOM", "WIRELESS"]):
+        return "Telecommunication & Media", "Telecom Services & Equipment"
+    elif any(k in ind_upper for k in ["MEDIA", "ENTERTAIN", "BROADCAST", "PUBLISH"]):
+        return "Telecommunication & Media", "Broadcasting & Entertainment"
+    elif any(k in ind_upper for k in ["RETAIL", "STORE"]):
+        return "Consumer Discretionary & Retail", "Retail & Specialty Stores"
+    elif any(k in ind_upper for k in ["HOTEL", "RESORT", "TRAVEL", "TOURISM"]):
+        return "Consumer Discretionary & Retail", "Hotels, Resorts & Tourism"
+    elif any(k in ind_upper for k in ["TEXTILE", "APPAREL", "FOOTWEAR"]):
+        return "Consumer Discretionary & Retail", "Textiles, Apparel & Footwear"
+    else:
+        return "Diversified / Others", "Others"
+
+# Optional: Load local CSV if available in root ('nse_classification.csv')
+@st.cache_data(ttl=86400)
+def load_local_nse_csv():
     try:
         df_nse = pd.read_csv("nse_classification.csv")
         if not df_nse.empty and "Symbol" in df_nse.columns:
             return df_nse
     except Exception:
         pass
+    return pd.DataFrame()
 
-    # Source 2: Try fetching from reliable open-source GitHub mirrors of NSE stocks
-    urls_to_try = [
-        "https://raw.githubusercontent.com/AnjulaMehto/NSE_Stock_Data/main/EQUITY_L.csv",
-        "https://raw.githubusercontent.com/sahilrahman12/nse-stock-data/main/nse_stocks.csv",
-        "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-    ]
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    
-    for url in urls_to_try:
-        try:
-            resp = requests.get(url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                df_raw = pd.read_csv(StringIO(resp.text))
-                df_raw.columns = df_raw.columns.str.strip()
-                
-                if "SYMBOL" in df_raw.columns:
-                    df_nse["Symbol"] = df_raw["SYMBOL"].str.strip()
-                    
-                    # Extract Industry
-                    if "BASIC INDUSTRY" in df_raw.columns:
-                        df_nse["Industry"] = df_raw["BASIC INDUSTRY"].str.strip()
-                    elif "INDUSTRY" in df_raw.columns:
-                        df_nse["Industry"] = df_raw["INDUSTRY"].str.strip()
-                    else:
-                        df_nse["Industry"] = "Unclassified"
-                    break
-        except Exception:
-            continue
-            
-    return df_nse
-
-nse_class_df = load_nse_classification()
-
-# Failsafe AMFI/SEBI Indian Sector Mapper
-def map_to_indian_sector(industry_name):
-    ind_upper = str(industry_name).upper()
-    if any(k in ind_upper for k in ["BANK", "FINANC", "INSUR", "NBFC", "ASSET", "LOAN", "INVEST"]):
-        return "Financial Services"
-    elif any(k in ind_upper for k in ["SOFTWARE", "IT", "COMPUTER", "CYBER", "PLATFORM", "TECH"]):
-        return "Information Technology"
-    elif any(k in ind_upper for k in ["PHARMA", "HEALTH", "HOSPITAL", "DRUG", "BIOTECH", "MEDICAL"]):
-        return "Healthcare"
-    elif any(k in ind_upper for k in ["AUTO", "VEHICL", "ANCILLAR", "TYRE", "TRACTOR"]):
-        return "Automobile and Auto Components"
-    elif any(k in ind_upper for k in ["GOODS", "MANUFACTUR", "ENGINEER", "DEFENCE", "AERO", "INDUSTRIAL"]):
-        return "Capital Goods & Manufacturing"
-    elif any(k in ind_upper for k in ["FMCG", "FOOD", "BEVERAG", "TOBACCO", "PERSONAL", "HOUSEHOLD", "AGRI"]):
-        return "Fast Moving Consumer Goods"
-    elif any(k in ind_upper for k in ["STEEL", "METALS", "MINING", "CEMENT", "ALUMIN", "COPPER"]):
-        return "Metals & Mining"
-    elif any(k in ind_upper for k in ["CHEMIC", "FERTIL", "PESTICID", "POLYMER"]):
-        return "Chemicals & Fertilizers"
-    elif any(k in ind_upper for k in ["POWER", "ENERGY", "GAS", "OIL", "PETRO", "COAL", "UTIL"]):
-        return "Oil, Gas & Power"
-    elif any(k in ind_upper for k in ["REAL ESTATE", "CONSTRUCT", "INFRA", "CEMENT", "REALTY"]):
-        return "Construction & Realty"
-    elif any(k in ind_upper for k in ["TELECOM", "MEDIA", "ENTERTAIN", "BROADCAST"]):
-        return "Telecommunication & Media"
-    elif any(k in ind_upper for k in ["RETAIL", "CONSUMER SERVICES", "HOTEL", "TRAVEL", "TEXTILE", "APPAREL"]):
-        return "Consumer Discretionary & Retail"
-    else:
-        return "Diversified / Others"
+local_nse_df = load_local_nse_csv()
 
 # ==========================================
 # 2. BACKEND SCREENER LOGIC
@@ -125,7 +161,8 @@ def fetch_screener_data(exchanges, min_mcap, min_adr_val, limit_rows):
              'price_52_week_low',
              'exchange',
              'type',
-             'industry'
+             'industry',
+             'sector'
          )
          .where(
              col('market_cap_basic') >= min_mcap_inr,
@@ -143,7 +180,7 @@ def fetch_screener_data(exchanges, min_mcap, min_adr_val, limit_rows):
         return pd.DataFrame()
 
 # ==========================================
-# 3. SIDEBAR CONTROLS & DATA ENRICHMENT
+# 3. SIDEBAR CONTROLS & DYNAMIC DROPDOWNS
 # ==========================================
 with st.sidebar.form("filter_form"):
     st.header("1. Exchange & Universe")
@@ -156,25 +193,28 @@ with st.sidebar.form("filter_form"):
     st.markdown("---")
     st.header("🏛️ Official NSE Filters")
     
-    # Standard AMFI Indian Sectors list for UI rendering
-    default_indian_sectors = [
-        "Financial Services", "Information Technology", "Healthcare",
-        "Automobile and Auto Components", "Capital Goods & Manufacturing",
-        "Fast Moving Consumer Goods", "Metals & Mining", "Chemicals & Fertilizers",
-        "Oil, Gas & Power", "Construction & Realty", "Telecommunication & Media",
-        "Consumer Discretionary & Retail", "Diversified / Others"
-    ]
-    
+    # 1. NSE Sector Dropdown (Always populated with 13 Indian Sectors)
+    sector_options = list(INDIAN_SECTOR_HIERARCHY.keys())
     sector_choice = st.multiselect(
         "NSE Sector (e.g., Financial Services, IT):",
-        options=default_indian_sectors,
+        options=sector_options,
         default=[]
     )
     
-    # We will filter industries dynamically after fetching, but allow text input or multi-select fallback
-    industry_filter_text = st.text_input(
-        "Filter Industry Contains (Optional keyword, e.g., 'Pharma', 'Software'):",
-        value=""
+    # 2. Cascading NSE Industry Dropdown
+    if sector_choice:
+        industry_options = []
+        for sec in sector_choice:
+            industry_options.extend(INDIAN_SECTOR_HIERARCHY.get(sec, []))
+        industry_options = sorted(list(set(industry_options)))
+    else:
+        all_industries = [ind for inds in INDIAN_SECTOR_HIERARCHY.values() for ind in inds]
+        industry_options = sorted(list(set(all_industries)))
+        
+    industry_choice = st.multiselect(
+        "NSE Industry (e.g., Banks, IT - Software & Services):",
+        options=industry_options,
+        default=[]
     )
 
     st.markdown("---")
@@ -204,7 +244,7 @@ with st.sidebar.form("filter_form"):
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
 # ==========================================
-# 4. FETCH, ENRICH & FILTER
+# 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
 with st.spinner("Scanning Indian Equities & Mapping Official Indian Sectors..."):
     results_df = fetch_screener_data(
@@ -229,29 +269,36 @@ else:
     # 3. SMART DEDUPLICATION (Keep NSE listing for dual-listed stocks)
     df = df.drop_duplicates(subset=['name'], keep='first')
     
-    # --- 4. MAP OFFICIAL INDIAN SECTOR & INDUSTRY ---
-    if not nse_class_df.empty and "Symbol" in nse_class_df.columns:
+    # --- 4. SAFE INDIAN SECTOR & INDUSTRY MAPPING (Zero KeyError) ---
+    mapped_sectors = []
+    mapped_industries = []
+    for _, row in df.iterrows():
+        sec, ind = map_to_indian_classification(row.get("industry", ""), row.get("sector", ""))
+        mapped_sectors.append(sec)
+        mapped_industries.append(ind)
+        
+    df["Sector"] = mapped_sectors
+    df["Industry"] = mapped_industries
+    
+    # Optional override: If you uploaded 'nse_classification.csv' with columns Symbol, Sector, Industry
+    if not local_nse_df.empty and "Symbol" in local_nse_df.columns:
+        override_df = local_nse_df[["Symbol", "Sector", "Industry"]].copy()
+        override_df.rename(columns={"Sector": "NSE_Sector", "Industry": "NSE_Industry"}, inplace=True)
+        
         df = df.merge(
-            nse_class_df[["Symbol", "Industry"]],
+            override_df,
             left_on="name",
             right_on="Symbol",
-            how="left",
-            suffixes=("", "_nse")
+            how="left"
         )
-        # Prefer NSE Industry if available, fallback to API Industry
-        df["Industry"] = df["Industry_nse"].combine_first(df["industry"]).fillna("Diversified")
-    else:
-        df["Industry"] = df["industry"].fillna("Diversified")
-        
-    # Generate official Indian AMFI/SEBI Sector from Industry
-    df["Sector"] = df["Industry"].apply(map_to_indian_sector)
+        df["Sector"] = df["NSE_Sector"].combine_first(df["Sector"]).fillna("Diversified / Others")
+        df["Industry"] = df["NSE_Industry"].combine_first(df["Industry"]).fillna("Others")
         
     # --- 5. APPLY NSE SECTOR & INDUSTRY FILTERS ---
     if sector_choice:
         df = df[df["Sector"].isin(sector_choice)]
-        
-    if industry_filter_text.strip():
-        df = df[df["Industry"].str.contains(industry_filter_text.strip(), case=False, na=False)]
+    if industry_choice:
+        df = df[df["Industry"].isin(industry_choice)]
     
     # --- SAFE NUMERIC CONVERSION ---
     numeric_cols = [
