@@ -12,30 +12,33 @@ st.set_page_config(
 st.title("📈 India Equities Interactive Screener")
 st.markdown("Filter Indian equities using **TradingView's backend API** and copy your watchlist directly.")
 
-# --- SIDEBAR FILTERS ---
-st.sidebar.header("1. Exchange & Universe")
-exchange_choice = st.sidebar.multiselect(
-    "Select Exchanges:",
-    options=["NSE", "BSE"],
-    default=["NSE"]
-)
+# --- SIDEBAR FORM (ONLY RUNS WHEN 'APPLY FILTERS' IS CLICKED) ---
+with st.sidebar.form("filter_form"):
+    st.header("1. Exchange & Universe")
+    exchange_choice = st.multiselect(
+        "Select Exchanges:",
+        options=["NSE", "BSE"],
+        default=["NSE"]
+    )
 
-st.sidebar.header("2. Fundamental Filters")
-# Market Cap in INR Crores (1 Crore = 10,000,000 INR)
-min_mcap_cr = st.sidebar.number_input("Min Market Cap (₹ Crores):", min_value=0, value=500, step=100)
-min_pe = st.sidebar.slider("Min P/E Ratio:", min_value=0.0, max_value=100.0, value=5.0, step=1.0)
-max_pe = st.sidebar.slider("Max P/E Ratio:", min_value=5.0, max_value=200.0, value=60.0, step=5.0)
+    st.header("2. Fundamental Filters")
+    # Market Cap in INR Crores (1 Crore = 10,000,000 INR)
+    min_mcap_cr = st.number_input("Min Market Cap (₹ Crores):", min_value=0, value=500, step=100)
+    min_pe = st.slider("Min P/E Ratio:", min_value=0.0, max_value=100.0, value=5.0, step=1.0)
+    max_pe = st.slider("Max P/E Ratio:", min_value=5.0, max_value=200.0, value=60.0, step=5.0)
 
-st.sidebar.header("3. Technical Filters (Daily)")
-min_rsi = st.sidebar.slider("Min Daily RSI (14):", min_value=10, max_value=90, value=50, step=5)
-max_rsi = st.sidebar.slider("Max Daily RSI (14):", min_value=20, max_value=100, value=80, step=5)
-above_sma50 = st.sidebar.checkbox("Price Above 50-Day SMA", value=True)
+    st.header("3. Technical Filters (Daily)")
+    min_rsi = st.slider("Min Daily RSI (14):", min_value=10, max_value=90, value=50, step=5)
+    max_rsi = st.slider("Max Daily RSI (14):", min_value=20, max_value=100, value=80, step=5)
+    above_sma50 = st.checkbox("Price Above 50-Day SMA", value=True)
 
-st.sidebar.header("4. Display Settings")
-max_results = st.sidebar.slider("Max Results to Fetch:", min_value=50, max_value=1000, value=250, step=50)
+    st.header("4. Display Settings")
+    max_results = st.slider("Max Results to Fetch:", min_value=50, max_value=1000, value=250, step=50)
+    
+    # Dedicated Apply Button
+    apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
 # --- BACKEND SCREENER LOGIC ---
-@st.cache_data(ttl=300)
 def fetch_screener_data(exchanges, min_mcap, min_pe_val, max_pe_val, min_rsi_val, max_rsi_val, sma_filter, limit_rows):
     if not exchanges:
         return pd.DataFrame()
@@ -43,7 +46,9 @@ def fetch_screener_data(exchanges, min_mcap, min_pe_val, max_pe_val, min_rsi_val
     # 1 Crore INR = 10^7 INR
     min_mcap_inr = min_mcap * 10_000_000
     
+    # Explicitly set market to 'india' so it never pulls US/Global stocks
     q = (Query()
+         .set_markets('india')
          .select(
              'name', 
              'close', 
@@ -89,7 +94,7 @@ with st.spinner("Scanning Indian Equities via TradingView API..."):
     )
 
 if results_df.empty:
-    st.warning("No stocks matched your criteria. Try widening your filters in the sidebar.")
+    st.warning("No stocks matched your criteria. Click 'Apply Filters' after widening your ranges in the sidebar.")
 else:
     display_df = results_df.copy()
     
