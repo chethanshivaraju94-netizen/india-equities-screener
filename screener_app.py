@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Filter Indian equities using **TradingView's backend API** and copy your watchlist directly.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** matching your exact TradingView filter layout.")
 
 # --- SIDEBAR FORM (ONLY RUNS WHEN 'APPLY FILTERS' IS CLICKED) ---
 with st.sidebar.form("filter_form"):
@@ -20,34 +20,55 @@ with st.sidebar.form("filter_form"):
         options=["NSE", "BSE"],
         default=["NSE"]
     )
+    
+    sector_choice = st.multiselect(
+        "Filter by Sector (Optional - Leave empty for All):",
+        options=[
+            "Finance", "Technology", "Health Technology", "Electronic Technology",
+            "Consumer Non-Durables", "Consumer Durables", "Process Industries",
+            "Producer Manufacturing", "Energy Minerals", "Non-Energy Minerals",
+            "Commercial Services", "Retail Trade", "Transportation", "Utilities"
+        ],
+        default=[]
+    )
 
-    st.header("2. Fundamental Filters")
-    # Market Cap in INR Crores (1 Crore = 10,000,000 INR)
-    min_mcap_cr = st.number_input("Min Market Cap (₹ Crores):", min_value=0, value=500, step=100)
-    min_pe = st.slider("Min P/E Ratio:", min_value=0.0, max_value=100.0, value=5.0, step=1.0)
-    max_pe = st.slider("Max P/E Ratio:", min_value=5.0, max_value=200.0, value=60.0, step=5.0)
+    st.header("2. Fundamental & Liquidity")
+    # 10 B INR = 1000 Crores INR
+    min_mcap_cr = st.number_input(
+        "Min Market Cap (₹ Crores) [1000 Cr = 10B INR]:", 
+        min_value=0, value=1000, step=100
+    )
+    # 50 M INR = 5 Crores INR
+    min_vol60d_cr = st.number_input(
+        "Min 60D Avg Rupee Volume (₹ Cr) [5 Cr = 50M INR]:", 
+        min_value=0.0, value=5.0, step=0.5
+    )
 
-    st.header("3. Technical Filters (Daily)")
-    min_rsi = st.slider("Min Daily RSI (14):", min_value=10, max_value=90, value=50, step=5)
-    max_rsi = st.slider("Max Daily RSI (14):", min_value=20, max_value=100, value=80, step=5)
-    above_sma50 = st.checkbox("Price Above 50-Day SMA", value=True)
+    st.header("3. Trend & Moving Averages")
+    above_ema21 = st.checkbox("Price > EMA 21", value=True)
+    above_sma50 = st.checkbox("Price > SMA 50", value=True)
+    above_sma200 = st.checkbox("Price > SMA 200", value=True)
 
-    st.header("4. Display Settings")
-    max_results = st.slider("Max Results to Fetch:", min_value=50, max_value=1000, value=250, step=50)
+    st.header("4. Volatility & 52-Week Range")
+    min_adr = st.slider("Min ADR % (Average Daily Range):", min_value=0.0, max_value=10.0, value=2.25, step=0.25)
+    min_above_52l = st.slider("Min % Above 52-Week Low:", min_value=0, max_value=100, value=20, step=5)
+    max_below_52h = st.slider("Max % Below 52-Week High (0% to X%):", min_value=0, max_value=50, value=30, step=5)
+
+    st.header("5. Display Settings")
+    max_results = st.slider("Max Results to Fetch:", min_value=100, max_value=2000, value=1000, step=100)
     
     # Dedicated Apply Button
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
 # --- BACKEND SCREENER LOGIC ---
-def fetch_screener_data(exchanges, min_mcap, min_pe_val, max_pe_val, min_rsi_val, max_rsi_val, sma_filter, limit_rows):
+def fetch_screener_data(exchanges, min_mcap, limit_rows):
     if not exchanges:
         return pd.DataFrame()
     
-    # 1 Crore INR = 10^7 INR
+    # Convert ₹ Crores to raw INR (1 Crore = 10,000,000 INR)
     min_mcap_inr = min_mcap * 10_000_000
     
-    # Use exact TradingView API internal field names!
-    # P/E ratio is 'price_earnings_ttm' in the API database, NOT 'P/E'
+    # Fetch all required fields from TradingView India backend
     q = (Query()
          .set_markets('india')
          .select(
@@ -56,15 +77,19 @@ def fetch_screener_data(exchanges, min_mcap, min_pe_val, max_pe_val, min_rsi_val
              'change', 
              'volume', 
              'market_cap_basic', 
-             'price_earnings_ttm', 
-             'RSI', 
-             'SMA50',
+             'EMA21',
+             'SMA50', 
+             'SMA200',
+             'average_volume_60d_calc',
+             'ADR',
+             'price_52_week_high',
+             'price_52_week_low',
+             'sector',
+             'industry',
              'exchange'
          )
          .where(
-             col('market_cap_basic') >= min_mcap_inr,
-             col('price_earnings_ttm').between(min_pe_val, max_pe_val),
-             col('RSI').between(min_rsi_val, max_rsi_val)
+             col('market_cap_basic') >= min_mcap_inr
          )
          .order_by('volume', ascending=False)
          .limit(limit_rows)
@@ -72,16 +97,6 @@ def fetch_screener_data(exchanges, min_mcap, min_pe_val, max_pe_val, min_rsi_val
         
     try:
         _, df = q.get_scanner_data()
-        if df.empty:
-            return df
-            
-        # Filter exchanges accurately
-        df = df[df['exchange'].isin(exchanges)]
-        
-        # Apply SMA50 Trend Filter cleanly without breaking REST API syntax
-        if sma_filter and 'SMA50' in df.columns and 'close' in df.columns:
-            df = df[df['close'] > df['SMA50']]
-            
         return df
     except Exception as e:
         st.error(f"Error fetching data from TradingView API: {e}")
@@ -92,51 +107,88 @@ with st.spinner("Scanning Indian Equities via TradingView API..."):
     results_df = fetch_screener_data(
         exchange_choice,
         min_mcap_cr,
-        min_pe,
-        max_pe,
-        min_rsi,
-        max_rsi,
-        above_sma50,
         max_results
     )
 
 if results_df.empty:
-    st.warning("No stocks matched your criteria. Click 'Apply Filters' after widening your ranges in the sidebar.")
+    st.warning("No stocks matched your criteria. Click 'Apply Filters' after adjusting your parameters.")
 else:
-    display_df = results_df.copy()
+    df = results_df.copy()
     
-    # Rename API field to readable UI label
-    if 'price_earnings_ttm' in display_df.columns:
-        display_df.rename(columns={'price_earnings_ttm': 'P/E'}, inplace=True)
+    # 1. Filter Exchanges exactly
+    df = df[df['exchange'].isin(exchange_choice)]
     
-    # --- SAFE TYPE CONVERSION TO PREVENT ROUNDING ERRORS ---
-    numeric_cols = ['market_cap_basic', 'close', 'change', 'RSI', 'P/E', 'volume']
-    for col_name in numeric_cols:
-        if col_name in display_df.columns:
-            display_df[col_name] = pd.to_numeric(display_df[col_name], errors='coerce')
+    # 2. Filter Sector (if user selected specific sectors)
+    if sector_choice:
+        df = df[df['sector'].isin(sector_choice)]
     
-    # Perform calculations and rounding safely
-    display_df['Market Cap (₹ Cr)'] = (display_df['market_cap_basic'] / 10_000_000).round(2)
-    display_df['Close'] = display_df['close'].round(2)
-    display_df['Change %'] = display_df['change'].round(2)
-    display_df['RSI (14)'] = display_df['RSI'].round(1)
-    display_df['P/E'] = display_df['P/E'].round(2)
-    
-    # Build the TradingView Symbol column (e.g., NSE:RELIANCE)
-    display_df['TV_Symbol'] = display_df['exchange'] + ":" + display_df['name']
-    
-    table_columns = [
-        'TV_Symbol', 'name', 'Close', 'Change %', 
-        'RSI (14)', 'P/E', 'Market Cap (₹ Cr)', 'volume'
+    # --- SAFE NUMERIC CONVERSION ---
+    numeric_cols = [
+        'market_cap_basic', 'close', 'change', 'volume', 
+        'EMA21', 'SMA50', 'SMA200', 'average_volume_60d_calc', 
+        'ADR', 'price_52_week_high', 'price_52_week_low'
     ]
+    for col_name in numeric_cols:
+        if col_name in df.columns:
+            df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+            
+    # --- APPLY SCREENSHOT FILTERS ROBUSTLY IN PANDAS ---
     
-    st.subheader(f"📊 Filtered Results ({len(display_df)} Stocks Found)")
-    st.dataframe(display_df[table_columns], use_container_width=True, hide_index=True)
-    
-    # --- TRADINGVIEW WATCHLIST EXPORT ---
-    st.markdown("---")
-    st.subheader("📋 Copy to TradingView Watchlist")
-    st.write("Copy the text string below and paste it directly into your TradingView Watchlist **Symbol Search / Import** box:")
-    
-    tv_watchlist_string = ", ".join(display_df['TV_Symbol'].tolist())
-    st.code(tv_watchlist_string, language="text")
+    # A. Trend & Moving Average Filters
+    if above_ema21 and 'EMA21' in df.columns:
+        df = df[df['close'] > df['EMA21']]
+    if above_sma50 and 'SMA50' in df.columns:
+        df = df[df['close'] > df['SMA50']]
+    if above_sma200 and 'SMA200' in df.columns:
+        df = df[df['close'] > df['SMA200']]
+        
+    # B. 60-Day Average Rupee Volume Filter (Price x avg vol 60D > 50M INR)
+    # 1 Crore = 10,000,000 INR -> min_vol60d_cr * 10_000_000
+    if 'average_volume_60d_calc' in df.columns:
+        df['val_traded_60d_inr'] = df['close'] * df['average_volume_60d_calc']
+        df = df[df['val_traded_60d_inr'] >= (min_vol60d_cr * 10_000_000)]
+        
+    # C. ADR % Filter (ADR >= 2.25%)
+    if 'ADR' in df.columns:
+        df = df[df['ADR'] >= min_adr]
+        
+    # D. Price Above 52-Week Low by X% or more (e.g., >= 20%)
+    # Formula: ((Close - 52W_Low) / 52W_Low) * 100 >= 20%
+    if 'price_52_week_low' in df.columns:
+        pct_above_low = ((df['close'] - df['price_52_week_low']) / df['price_52_week_low']) * 100
+        df = df[pct_above_low >= min_above_52l]
+        
+    # E. Price Below 52-Week High by 0% to Y% (e.g., <= 30%)
+    # Formula: ((52W_High - Close) / 52W_High) * 100 <= 30% AND Close <= 52W_High
+    if 'price_52_week_high' in df.columns:
+        pct_below_high = ((df['price_52_week_high'] - df['close']) / df['price_52_week_high']) * 100
+        df = df[(pct_below_high >= 0) & (pct_below_high <= max_below_52h)]
+
+    # --- DISPLAY FORMATTING ---
+    if df.empty:
+        st.warning("No stocks passed all technical and fundamental criteria. Try loosening the 52W range or ADR filters.")
+    else:
+        # Format calculated display columns
+        df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
+        df['60D Vol (₹ Cr)'] = (df['val_traded_60d_inr'] / 10_000_000).round(2)
+        df['Close'] = df['close'].round(2)
+        df['Change %'] = df['change'].round(2)
+        df['ADR %'] = df['ADR'].round(2)
+        df['TV_Symbol'] = df['exchange'] + ":" + df['name']
+        
+        table_columns = [
+            'TV_Symbol', 'name', 'Close', 'Change %', 
+            'ADR %', '60D Vol (₹ Cr)', 'Market Cap (₹ Cr)', 
+            'sector', 'industry'
+        ]
+        
+        st.subheader(f"📊 Filtered Results ({len(df)} Stocks Found)")
+        st.dataframe(df[table_columns], use_container_width=True, hide_index=True)
+        
+        # --- TRADINGVIEW WATCHLIST EXPORT ---
+        st.markdown("---")
+        st.subheader("📋 Copy to TradingView Watchlist")
+        st.write("Copy the text string below and paste it directly into your TradingView Watchlist **Symbol Search / Import** box:")
+        
+        tv_watchlist_string = ", ".join(df['TV_Symbol'].tolist())
+        st.code(tv_watchlist_string, language="text")
