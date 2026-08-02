@@ -46,7 +46,8 @@ def fetch_screener_data(exchanges, min_mcap, min_pe_val, max_pe_val, min_rsi_val
     # 1 Crore INR = 10^7 INR
     min_mcap_inr = min_mcap * 10_000_000
     
-    # Explicitly set market to 'india' so it never pulls US/Global stocks
+    # Use exact TradingView API internal field names!
+    # P/E ratio is 'price_earnings_ttm' in the API database, NOT 'P/E'
     q = (Query()
          .set_markets('india')
          .select(
@@ -55,26 +56,32 @@ def fetch_screener_data(exchanges, min_mcap, min_pe_val, max_pe_val, min_rsi_val
              'change', 
              'volume', 
              'market_cap_basic', 
-             'P/E', 
+             'price_earnings_ttm', 
              'RSI', 
              'SMA50',
              'exchange'
          )
          .where(
-             col('exchange').isin(exchanges),
              col('market_cap_basic') >= min_mcap_inr,
-             col('P/E').between(min_pe_val, max_pe_val),
+             col('price_earnings_ttm').between(min_pe_val, max_pe_val),
              col('RSI').between(min_rsi_val, max_rsi_val)
          )
          .order_by('volume', ascending=False)
          .limit(limit_rows)
     )
-    
-    if sma_filter:
-        q = q.where(col('close') > col('SMA50'))
         
     try:
         _, df = q.get_scanner_data()
+        if df.empty:
+            return df
+            
+        # Filter exchanges accurately
+        df = df[df['exchange'].isin(exchanges)]
+        
+        # Apply SMA50 Trend Filter cleanly without breaking REST API syntax
+        if sma_filter and 'SMA50' in df.columns and 'close' in df.columns:
+            df = df[df['close'] > df['SMA50']]
+            
         return df
     except Exception as e:
         st.error(f"Error fetching data from TradingView API: {e}")
@@ -97,6 +104,10 @@ if results_df.empty:
     st.warning("No stocks matched your criteria. Click 'Apply Filters' after widening your ranges in the sidebar.")
 else:
     display_df = results_df.copy()
+    
+    # Rename API field to readable UI label
+    if 'price_earnings_ttm' in display_df.columns:
+        display_df.rename(columns={'price_earnings_ttm': 'P/E'}, inplace=True)
     
     # --- SAFE TYPE CONVERSION TO PREVENT ROUNDING ERRORS ---
     numeric_cols = ['market_cap_basic', 'close', 'change', 'RSI', 'P/E', 'volume']
