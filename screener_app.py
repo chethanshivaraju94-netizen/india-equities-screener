@@ -18,7 +18,7 @@ with st.sidebar.form("filter_form"):
     exchange_choice = st.multiselect(
         "Select Exchanges:",
         options=["NSE", "BSE"],
-        default=["NSE"]
+        default=["NSE", "BSE"]
     )
     
     sector_choice = st.multiselect(
@@ -55,20 +55,21 @@ with st.sidebar.form("filter_form"):
     max_below_52h = st.slider("Max % Below 52-Week High (0% to X%):", min_value=0, max_value=50, value=30, step=5)
 
     st.header("5. Display Settings")
-    max_results = st.slider("Max Results to Fetch:", min_value=100, max_value=2000, value=1000, step=100)
+    # Increased ceiling to 3000 to prevent truncating eligible ₹1000+ Cr market cap stocks
+    max_results = st.slider("Max Results to Fetch:", min_value=500, max_value=3000, value=2500, step=250)
     
     # Dedicated Apply Button
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
 # --- BACKEND SCREENER LOGIC ---
-def fetch_screener_data(exchanges, min_mcap, limit_rows):
+def fetch_screener_data(exchanges, min_mcap, min_adr_val, limit_rows):
     if not exchanges:
         return pd.DataFrame()
     
     # Convert ₹ Crores to raw INR (1 Crore = 10,000,000 INR)
     min_mcap_inr = min_mcap * 10_000_000
     
-    # Fetch all required fields from TradingView India backend
+    # Push Market Cap AND ADR % directly into server-side .where() to prevent truncation
     q = (Query()
          .set_markets('india')
          .select(
@@ -89,7 +90,8 @@ def fetch_screener_data(exchanges, min_mcap, limit_rows):
              'exchange'
          )
          .where(
-             col('market_cap_basic') >= min_mcap_inr
+             col('market_cap_basic') >= min_mcap_inr,
+             col('ADR') >= min_adr_val
          )
          .order_by('volume', ascending=False)
          .limit(limit_rows)
@@ -107,6 +109,7 @@ with st.spinner("Scanning Indian Equities via TradingView API..."):
     results_df = fetch_screener_data(
         exchange_choice,
         min_mcap_cr,
+        min_adr,
         max_results
     )
 
@@ -142,31 +145,25 @@ else:
     if above_sma200 and 'SMA200' in df.columns:
         df = df[df['close'] > df['SMA200']]
         
-    # B. 60-Day Average Rupee Volume Filter (Price x avg vol 60D > 50M INR)
-    # 1 Crore = 10,000,000 INR -> min_vol60d_cr * 10_000_000
+    # B. 60-Day Average Rupee Volume Filter (Price x avg vol 60D >= 50M INR / ₹5 Cr)
     if 'average_volume_60d_calc' in df.columns:
         df['val_traded_60d_inr'] = df['close'] * df['average_volume_60d_calc']
         df = df[df['val_traded_60d_inr'] >= (min_vol60d_cr * 10_000_000)]
         
-    # C. ADR % Filter (ADR >= 2.25%)
-    if 'ADR' in df.columns:
-        df = df[df['ADR'] >= min_adr]
-        
-    # D. Price Above 52-Week Low by X% or more (e.g., >= 20%)
-    # Formula: ((Close - 52W_Low) / 52W_Low) * 100 >= 20%
+    # C. Price Above 52-Week Low by X% or more (>= 20%)
     if 'price_52_week_low' in df.columns:
         pct_above_low = ((df['close'] - df['price_52_week_low']) / df['price_52_week_low']) * 100
         df = df[pct_above_low >= min_above_52l]
         
-    # E. Price Below 52-Week High by 0% to Y% (e.g., <= 30%)
-    # Formula: ((52W_High - Close) / 52W_High) * 100 <= 30% AND Close <= 52W_High
+    # D. Price Below 52-Week High by 0% to Y% (<= 30%)
+    # Removed the >= 0 floor so stocks making new 52-week highs are never accidentally dropped!
     if 'price_52_week_high' in df.columns:
         pct_below_high = ((df['price_52_week_high'] - df['close']) / df['price_52_week_high']) * 100
-        df = df[(pct_below_high >= 0) & (pct_below_high <= max_below_52h)]
+        df = df[pct_below_high <= max_below_52h]
 
     # --- DISPLAY FORMATTING ---
     if df.empty:
-        st.warning("No stocks passed all technical and fundamental criteria. Try loosening the 52W range or ADR filters.")
+        st.warning("No stocks passed all technical and fundamental criteria.")
     else:
         # Format calculated display columns
         df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
