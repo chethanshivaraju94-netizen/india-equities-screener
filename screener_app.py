@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed and **Official NSE / AMFI Industry Classification**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed and **Official NSE / AMFI Sector & Industry Classification**.")
 
 # ==========================================
 # 1. NSE / AMFI CLASSIFICATION ENGINE
@@ -20,16 +20,14 @@ st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView s
 @st.cache_data(ttl=86400)  # Cache for 24 hours so it runs instantly
 def load_nse_classification():
     """
-    Loads official NSE listed securities with SEBI/AMFI 4-tier classification:
-    Macro-Economic Sector -> Sector -> Industry -> Basic Industry
+    Loads official NSE listed securities with AMFI/SEBI classification:
+    Sector -> Industry
     """
-    # Standard AMFI / NSE classification fallback mapping & structure
-    # Attempt to load from official NSE equities list or local repository file 'nse_classification.csv'
     try:
-        # Check if local file exists in repo first
+        # Check if local custom file exists in repo first ('nse_classification.csv' with Symbol, Sector, Industry)
         df_nse = pd.read_csv("nse_classification.csv")
     except Exception:
-        # Automated fallback: Load official NSE equity list with Basic Industry mapping
+        # Automated fallback: Load official NSE equity list
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
@@ -41,51 +39,50 @@ def load_nse_classification():
             # Standardize column names
             df_raw.columns = df_raw.columns.str.strip()
             
-            # Map AMFI 4-Tier structure based on NSE Basic Industry
             df_nse = pd.DataFrame()
             df_nse["Symbol"] = df_raw["SYMBOL"].str.strip()
-            df_nse["Name"] = df_raw["NAME OF COMPANY"].str.strip()
             
-            # Map Basic Industry column
+            # Use raw NSE industry column as 'Industry'
             if "BASIC INDUSTRY" in df_raw.columns:
-                df_nse["Basic_Industry"] = df_raw["BASIC INDUSTRY"].str.strip()
+                df_nse["Industry"] = df_raw["BASIC INDUSTRY"].str.strip()
+            elif "INDUSTRY" in df_raw.columns:
+                df_nse["Industry"] = df_raw["INDUSTRY"].str.strip()
             else:
-                df_nse["Basic_Industry"] = "Unclassified"
+                df_nse["Industry"] = "Unclassified"
                 
-            # Assign Macro-Sector and Sector categories cleanly
-            def map_amfi_sector(bi):
-                bi_upper = str(bi).upper()
-                if any(k in bi_upper for k in ["BANK", "FINANC", "INSUR", "NBFC", "ASSET"]):
-                    return "Financial Services", "Financial Services"
-                elif any(k in bi_upper for k in ["SOFTWARE", "IT", "COMPUTER", "PLATFORM"]):
-                    return "Information Technology", "Information Technology"
-                elif any(k in bi_upper for k in ["PHARMA", "HEALTH", "HOSPITAL", "DRUG", "BIOTECH"]):
-                    return "Healthcare", "Healthcare"
-                elif any(k in bi_upper for k in ["AUTO", "VEHICL", "ANCILLAR", "TYRE"]):
-                    return "Consumer Discretionary", "Automobile and Auto Components"
-                elif any(k in bi_upper for k in ["GOODS", "MANUFACTUR", "ENGINEER", "DEFENCE", "AERO"]):
-                    return "Industrials", "Capital Goods"
-                elif any(k in bi_upper for k in ["FMCG", "FOOD", "BEVERAG", "TOBACCO", "PERSONAL"]):
-                    return "Fast Moving Consumer Goods", "Fast Moving Consumer Goods"
-                elif any(k in bi_upper for k in ["STEEL", "METALS", "MINING", "CEMENT", "CHEMIC"]):
-                    return "Commodities", "Metals & Mining / Chemicals"
-                elif any(k in bi_upper for k in ["POWER", "ENERGY", "GAS", "OIL", "PETRO"]):
-                    return "Energy", "Oil, Gas & Consumable Fuels / Power"
-                elif any(k in bi_upper for k in ["REAL ESTATE", "CONSTRUCT", "INFRA"]):
-                    return "Realty & Infrastructure", "Construction / Realty"
-                elif any(k in bi_upper for k in ["TELECOM", "MEDIA", "ENTERTAIN"]):
-                    return "Telecommunication & Media", "Media, Entertainment & Telecom"
+            # Assign official NSE Sector categories cleanly from Industry
+            def map_nse_sector(ind):
+                ind_upper = str(ind).upper()
+                if any(k in ind_upper for k in ["BANK", "FINANC", "INSUR", "NBFC", "ASSET"]):
+                    return "Financial Services"
+                elif any(k in ind_upper for k in ["SOFTWARE", "IT", "COMPUTER", "PLATFORM"]):
+                    return "Information Technology"
+                elif any(k in ind_upper for k in ["PHARMA", "HEALTH", "HOSPITAL", "DRUG", "BIOTECH"]):
+                    return "Healthcare"
+                elif any(k in ind_upper for k in ["AUTO", "VEHICL", "ANCILLAR", "TYRE"]):
+                    return "Automotive & Auto Components"
+                elif any(k in ind_upper for k in ["GOODS", "MANUFACTUR", "ENGINEER", "DEFENCE", "AERO"]):
+                    return "Capital Goods & Manufacturing"
+                elif any(k in ind_upper for k in ["FMCG", "FOOD", "BEVERAG", "TOBACCO", "PERSONAL"]):
+                    return "Fast Moving Consumer Goods"
+                elif any(k in ind_upper for k in ["STEEL", "METALS", "MINING", "CEMENT", "CHEMIC"]):
+                    return "Metals, Mining & Chemicals"
+                elif any(k in ind_upper for k in ["POWER", "ENERGY", "GAS", "OIL", "PETRO"]):
+                    return "Oil, Gas & Energy"
+                elif any(k in ind_upper for k in ["REAL ESTATE", "CONSTRUCT", "INFRA"]):
+                    return "Construction & Realty"
+                elif any(k in ind_upper for k in ["TELECOM", "MEDIA", "ENTERTAIN"]):
+                    return "Media, Entertainment & Telecom"
+                elif any(k in ind_upper for k in ["RETAIL", "CONSUMER SERVICES", "HOTEL", "TRAVEL"]):
+                    return "Consumer Services & Retail"
                 else:
-                    return "Others", "Diversified / Others"
+                    return "Diversified / Others"
             
-            mapped_sectors = df_nse["Basic_Industry"].apply(map_amfi_sector)
-            df_nse["Macro_Sector"] = [x[0] for x in mapped_sectors]
-            df_nse["Sector"] = [x[1] for x in mapped_sectors]
-            df_nse["Industry"] = df_nse["Basic_Industry"]  # Mapped to level 3/4 AMFI depth
+            df_nse["Sector"] = df_nse["Industry"].apply(map_nse_sector)
             
-        except Exception as e:
+        except Exception:
             # Safe empty structure if offline
-            df_nse = pd.DataFrame(columns=["Symbol", "Macro_Sector", "Sector", "Industry", "Basic_Industry"])
+            df_nse = pd.DataFrame(columns=["Symbol", "Sector", "Industry"])
             
     return df_nse
 
@@ -103,39 +100,25 @@ with st.sidebar.form("filter_form"):
     )
     
     st.markdown("---")
-    st.header("🏛️ Official NSE / AMFI Filters")
+    st.header("🏛️ Official NSE Filters")
     
-    # Dynamic options from loaded NSE dataset
-    macro_options = sorted(nse_class_df["Macro_Sector"].dropna().unique().tolist()) if not nse_class_df.empty else []
-    macro_choice = st.multiselect(
-        "Macro-Economic Sector (e.g., Industrials, Financials):",
-        options=macro_options,
-        default=[]
-    )
-    
-    # Cascade Sector options based on Macro choice
-    if macro_choice and not nse_class_df.empty:
-        sector_options = sorted(nse_class_df[nse_class_df["Macro_Sector"].isin(macro_choice)]["Sector"].dropna().unique().tolist())
-    else:
-        sector_options = sorted(nse_class_df["Sector"].dropna().unique().tolist()) if not nse_class_df.empty else []
-        
+    # 1. NSE Sector Options
+    sector_options = sorted(nse_class_df["Sector"].dropna().unique().tolist()) if not nse_class_df.empty else []
     sector_choice = st.multiselect(
         "NSE Sector (e.g., Capital Goods, IT):",
         options=sector_options,
         default=[]
     )
     
-    # Cascade Basic Industry options
+    # 2. Cascading Industry Options (Narrows automatically when Sector is selected)
     if sector_choice and not nse_class_df.empty:
-        basic_ind_options = sorted(nse_class_df[nse_class_df["Sector"].isin(sector_choice)]["Basic_Industry"].dropna().unique().tolist())
-    elif macro_choice and not nse_class_df.empty:
-        basic_ind_options = sorted(nse_class_df[nse_class_df["Macro_Sector"].isin(macro_choice)]["Basic_Industry"].dropna().unique().tolist())
+        industry_options = sorted(nse_class_df[nse_class_df["Sector"].isin(sector_choice)]["Industry"].dropna().unique().tolist())
     else:
-        basic_ind_options = sorted(nse_class_df["Basic_Industry"].dropna().unique().tolist()) if not nse_class_df.empty else []
+        industry_options = sorted(nse_class_df["Industry"].dropna().unique().tolist()) if not nse_class_df.empty else []
         
-    basic_ind_choice = st.multiselect(
-        "Basic Industry (e.g., Industrial Products, Defence):",
-        options=basic_ind_options,
+    industry_choice = st.multiselect(
+        "NSE Industry (e.g., Pharmaceuticals, Industrial Products):",
+        options=industry_options,
         default=[]
     )
 
@@ -236,30 +219,26 @@ else:
     # 3. SMART DEDUPLICATION (Removes duplicate BSE rows for stocks already listed on NSE)
     df = df.drop_duplicates(subset=['name'], keep='first')
     
-    # --- 4. MERGE OFFICIAL NSE / AMFI CLASSIFICATION ---
+    # --- 4. MERGE OFFICIAL NSE SECTOR & INDUSTRY ---
     if not nse_class_df.empty:
         df = df.merge(
-            nse_class_df[["Symbol", "Macro_Sector", "Sector", "Basic_Industry"]],
+            nse_class_df[["Symbol", "Sector", "Industry"]],
             left_on="name",
             right_on="Symbol",
             how="left"
         )
         # Fill unmapped symbols
-        df["Macro_Sector"] = df["Macro_Sector"].fillna("Others")
         df["Sector"] = df["Sector"].fillna("Unclassified")
-        df["Basic_Industry"] = df["Basic_Industry"].fillna("Unclassified")
+        df["Industry"] = df["Industry"].fillna("Unclassified")
     else:
-        df["Macro_Sector"] = "N/A"
         df["Sector"] = "N/A"
-        df["Basic_Industry"] = "N/A"
+        df["Industry"] = "N/A"
         
-    # --- 5. APPLY CASCADING NSE SECTOR & INDUSTRY FILTERS ---
-    if macro_choice:
-        df = df[df["Macro_Sector"].isin(macro_choice)]
+    # --- 5. APPLY NSE SECTOR & INDUSTRY FILTERS ---
     if sector_choice:
         df = df[df["Sector"].isin(sector_choice)]
-    if basic_ind_choice:
-        df = df[df["Basic_Industry"].isin(basic_ind_choice)]
+    if industry_choice:
+        df = df[df["Industry"].isin(industry_choice)]
     
     # --- SAFE NUMERIC CONVERSION ---
     numeric_cols = [
@@ -305,7 +284,7 @@ else:
         table_columns = [
             'TV_Symbol', 'name', 'Close', 'Change %', 
             'ADR %', '60D Vol (₹ Cr)', 'Market Cap (₹ Cr)', 
-            'Macro_Sector', 'Sector', 'Basic_Industry'
+            'Sector', 'Industry'
         ]
         
         st.subheader(f"📊 Filtered Results ({len(df)} Stocks Found)")
