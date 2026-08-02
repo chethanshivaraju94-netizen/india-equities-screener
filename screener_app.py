@@ -92,6 +92,14 @@ if results_df.empty:
     st.warning("No stocks matched your criteria. Try widening your filters in the sidebar.")
 else:
     display_df = results_df.copy()
+    
+    # --- SAFE TYPE CONVERSION TO PREVENT ROUNDING ERRORS ---
+    numeric_cols = ['market_cap_basic', 'close', 'change', 'RSI', 'P/E', 'volume']
+    for col_name in numeric_cols:
+        if col_name in display_df.columns:
+            display_df[col_name] = pd.to_numeric(display_df[col_name], errors='coerce')
+    
+    # Perform calculations and rounding safely
     display_df['Market Cap (₹ Cr)'] = (display_df['market_cap_basic'] / 10_000_000).round(2)
     display_df['Close'] = display_df['close'].round(2)
     display_df['Change %'] = display_df['change'].round(2)
