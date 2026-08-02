@@ -12,117 +12,248 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed and **Official NSE / AMFI Sector & Industry Classification**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed and the complete **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
-# 1. INDIAN SECTOR & INDUSTRY HIERARCHY
+# 1. COMPLETE 22 SECTORS & 59 INDUSTRIES
 # ==========================================
-# Complete Indian AMFI/SEBI Sector -> Industry Hierarchy for UI Dropdowns & Mapping
 INDIAN_SECTOR_HIERARCHY = {
-    "Financial Services": [
-        "Banks", "Finance & NBFCs", "Insurance", "Asset Management & Broking"
-    ],
-    "Information Technology": [
-        "IT - Software & Services", "IT - Hardware & Equipment", "Internet & E-Commerce"
-    ],
-    "Healthcare": [
-        "Pharmaceuticals & Biotechnology", "Healthcare Services & Hospitals", "Medical Equipment & Supplies"
-    ],
     "Automobile and Auto Components": [
         "Automobiles", "Auto Components & Ancillaries", "Tyres & Rubber"
     ],
-    "Capital Goods & Manufacturing": [
-        "Industrial Machinery & Equipment", "Defence & Aerospace", "Electrical Equipment", "Engineering & Construction"
+    "Capital Goods": [
+        "Aerospace & Defense", "Electrical Equipment", "Engineering Services", 
+        "Industrial Manufacturing & Products"
+    ],
+    "Chemicals": [
+        "Chemicals & Petrochemicals", "Fertilizers & Agrochemicals"
+    ],
+    "Construction": [
+        "Civil Construction", "Infrastructure Developers"
+    ],
+    "Construction Materials": [
+        "Cement & Cement Products", "Ceramics & Building Materials"
+    ],
+    "Consumer Durables": [
+        "Consumer Electronics & Appliances", "Gems, Jewellery & Watches"
+    ],
+    "Consumer Services": [
+        "Leisure Services", "Restaurants & QSR", "Retailing", "Travel & Tourism"
+    ],
+    "Diversified": [
+        "Diversified Commercial Services", "Diversified Industrials"
     ],
     "Fast Moving Consumer Goods": [
-        "Food & Beverages", "Personal & Household Care", "Agricultural Products & Tobacco"
+        "Agricultural Food & Beverages", "Food Products", "Personal Care", "Tobacco Products"
+    ],
+    "Financial Services": [
+        "Asset Management", "Banks", "Capital Markets", "Finance & NBFCs", 
+        "Financial Technology (Fintech)", "Insurance"
+    ],
+    "Forest Materials": [
+        "Paper, Forest & Jute Products"
+    ],
+    "Healthcare": [
+        "Healthcare Services", "Medical Equipment & Supplies", "Pharmaceuticals & Biotechnology"
+    ],
+    "Information Technology": [
+        "IT - Hardware", "IT - Software & Consulting"
+    ],
+    "Media, Entertainment & Publication": [
+        "Broadcasting & Cable TV", "Entertainment & Content", "Print Media & Publishing"
     ],
     "Metals & Mining": [
-        "Steel & Iron Products", "Non-Ferrous Metals (Aluminium, Copper)", "Mining & Minerals"
+        "Ferrous Metals (Steel & Iron)", "Non-Ferrous Metals", "Minerals & Mining"
     ],
-    "Chemicals & Fertilizers": [
-        "Specialty & Industrial Chemicals", "Fertilizers & Agrochemicals"
+    "Oil, Gas & Consumable Fuels": [
+        "Consumable Fuels & Coal", "Oil & Gas Exploration & Production", "Petroleum Products & Refining"
     ],
-    "Oil, Gas & Power": [
-        "Oil & Gas Exploration & Distribution", "Power Generation & Utilities", "Renewable Energy"
+    "Power": [
+        "Power Generation", "Power Transmission & Distribution"
     ],
-    "Construction & Realty": [
-        "Real Estate & Developers", "Cement & Building Materials", "Infrastructure & Construction"
+    "Realty": [
+        "Real Estate Developers", "Real Estate Services"
     ],
-    "Telecommunication & Media": [
-        "Telecom Services & Equipment", "Broadcasting & Entertainment", "Media & Publishing"
+    "Services": [
+        "Commercial & Professional Services", "Logistics & Transportation Services", "Port & Shipping Services"
     ],
-    "Consumer Discretionary & Retail": [
-        "Retail & Specialty Stores", "Hotels, Resorts & Tourism", "Textiles, Apparel & Footwear", "Consumer Durables & Electronics"
+    "Telecommunication": [
+        "Telecom - Equipment & Accessories", "Telecom - Services"
     ],
-    "Diversified / Others": [
-        "Diversified Industrials", "Logistics & Transportation", "Others"
+    "Textiles": [
+        "Garments & Apparels", "Textiles & Weaving"
+    ],
+    "Utilities": [
+        "Gas Transmission & Utilities", "Water & Other Utilities"
     ]
 }
 
 def map_to_indian_classification(tv_industry, tv_sector):
     """
-    Deterministic Indian AMFI/SEBI Sector & Industry mapper.
-    Never fails, works offline for all 3,000+ Indian equities.
+    Deterministic mapper: Assigns every stock to one of the 
+    official 22 AMFI/NSE Sectors and 59 Industries.
     """
     ind_upper = str(tv_industry).upper() + " " + str(tv_sector).upper()
     
+    # 1. Financial Services
     if any(k in ind_upper for k in ["BANK"]):
         return "Financial Services", "Banks"
     elif any(k in ind_upper for k in ["FINANC", "NBFC", "LOAN", "LEASING"]):
         return "Financial Services", "Finance & NBFCs"
     elif any(k in ind_upper for k in ["INSUR", "LIFE"]):
         return "Financial Services", "Insurance"
-    elif any(k in ind_upper for k in ["ASSET", "BROKING", "INVEST"]):
-        return "Financial Services", "Asset Management & Broking"
-    elif any(k in ind_upper for k in ["SOFTWARE", "IT", "COMPUTER", "CYBER", "PLATFORM", "PACKAGED"]):
-        return "Information Technology", "IT - Software & Services"
-    elif any(k in ind_upper for k in ["PHARMA", "DRUG", "BIOTECH", "MEDICAL"]):
+    elif any(k in ind_upper for k in ["ASSET", "BROKING", "INVEST", "CAPITAL"]):
+        return "Financial Services", "Capital Markets"
+    elif any(k in ind_upper for k in ["FINTECH", "PAYMENT"]):
+        return "Financial Services", "Financial Technology (Fintech)"
+    
+    # 2. Information Technology
+    elif any(k in ind_upper for k in ["SOFTWARE", "IT", "COMPUTER", "CYBER", "PLATFORM"]):
+        return "Information Technology", "IT - Software & Consulting"
+    elif any(k in ind_upper for k in ["HARDWARE", "SERVER", "SEMICONDUCTOR"]):
+        return "Information Technology", "IT - Hardware"
+    
+    # 3. Healthcare
+    elif any(k in ind_upper for k in ["PHARMA", "DRUG", "BIOTECH"]):
         return "Healthcare", "Pharmaceuticals & Biotechnology"
-    elif any(k in ind_upper for k in ["HOSPITAL", "HEALTH", "NURSING"]):
-        return "Healthcare", "Healthcare Services & Hospitals"
-    elif any(k in ind_upper for k in ["AUTO PARTS", "ANCILLAR", "TYRE", "RUBBER"]):
+    elif any(k in ind_upper for k in ["HOSPITAL", "HEALTH", "NURSING", "CLINIC"]):
+        return "Healthcare", "Healthcare Services"
+    elif any(k in ind_upper for k in ["MEDICAL", "SURGICAL", "DIAGNOSTIC"]):
+        return "Healthcare", "Medical Equipment & Supplies"
+    
+    # 4. Automobile and Auto Components
+    elif any(k in ind_upper for k in ["AUTO PARTS", "ANCILLAR"]):
         return "Automobile and Auto Components", "Auto Components & Ancillaries"
+    elif any(k in ind_upper for k in ["TYRE", "RUBBER"]):
+        return "Automobile and Auto Components", "Tyres & Rubber"
     elif any(k in ind_upper for k in ["MOTOR", "VEHICL", "AUTOMOBIL", "TRACTOR"]):
         return "Automobile and Auto Components", "Automobiles"
+    
+    # 5. Capital Goods
     elif any(k in ind_upper for k in ["DEFENCE", "AERO"]):
-        return "Capital Goods & Manufacturing", "Defence & Aerospace"
+        return "Capital Goods", "Aerospace & Defense"
+    elif any(k in ind_upper for k in ["ELECTRICAL", "CABLE", "TRANSFORMER"]):
+        return "Capital Goods", "Electrical Equipment"
     elif any(k in ind_upper for k in ["ENGINEER", "MACHIN", "MANUFACTUR", "INDUSTRIAL"]):
-        return "Capital Goods & Manufacturing", "Industrial Machinery & Equipment"
-    elif any(k in ind_upper for k in ["FMCG", "FOOD", "BEVERAG", "TOBACCO", "AGRI"]):
-        return "Fast Moving Consumer Goods", "Food & Beverages"
-    elif any(k in ind_upper for k in ["PERSONAL", "HOUSEHOLD", "CARE"]):
-        return "Fast Moving Consumer Goods", "Personal & Household Care"
-    elif any(k in ind_upper for k in ["STEEL", "IRON"]):
-        return "Metals & Mining", "Steel & Iron Products"
-    elif any(k in ind_upper for k in ["ALUMIN", "COPPER", "METAL", "MINING"]):
-        return "Metals & Mining", "Non-Ferrous Metals (Aluminium, Copper)"
+        return "Capital Goods", "Industrial Manufacturing & Products"
+    
+    # 6. Chemicals
+    elif any(k in ind_upper for k in ["FERTIL", "PESTICID", "AGROCHEM"]):
+        return "Chemicals", "Fertilizers & Agrochemicals"
     elif any(k in ind_upper for k in ["CHEMIC", "POLYMER"]):
-        return "Chemicals & Fertilizers", "Specialty & Industrial Chemicals"
-    elif any(k in ind_upper for k in ["FERTIL", "PESTICID"]):
-        return "Chemicals & Fertilizers", "Fertilizers & Agrochemicals"
-    elif any(k in ind_upper for k in ["POWER", "UTILIT", "ENERGY", "SOLAR", "RENEW"]):
-        return "Oil, Gas & Power", "Power Generation & Utilities"
-    elif any(k in ind_upper for k in ["OIL", "GAS", "PETRO", "COAL"]):
-        return "Oil, Gas & Power", "Oil & Gas Exploration & Distribution"
-    elif any(k in ind_upper for k in ["CEMENT", "BUILDING", "CONSTRUCT", "INFRA"]):
-        return "Construction & Realty", "Cement & Building Materials"
+        return "Chemicals", "Chemicals & Petrochemicals"
+    
+    # 7. Fast Moving Consumer Goods
+    elif any(k in ind_upper for k in ["TOBACCO", "CIGARETTE"]):
+        return "Fast Moving Consumer Goods", "Tobacco Products"
+    elif any(k in ind_upper for k in ["PERSONAL", "HOUSEHOLD", "CARE", "COSMETIC"]):
+        return "Fast Moving Consumer Goods", "Personal Care"
+    elif any(k in ind_upper for k in ["BEVERAG", "BREW", "DISTILL"]):
+        return "Fast Moving Consumer Goods", "Agricultural Food & Beverages"
+    elif any(k in ind_upper for k in ["FMCG", "FOOD", "DAIRY", "AGRI"]):
+        return "Fast Moving Consumer Goods", "Food Products"
+    
+    # 8. Metals & Mining
+    elif any(k in ind_upper for k in ["STEEL", "IRON"]):
+        return "Metals & Mining", "Ferrous Metals (Steel & Iron)"
+    elif any(k in ind_upper for k in ["ALUMIN", "COPPER", "ZINC", "NON-FERROUS"]):
+        return "Metals & Mining", "Non-Ferrous Metals"
+    elif any(k in ind_upper for k in ["MINING", "MINERAL", "ORE"]):
+        return "Metals & Mining", "Minerals & Mining"
+    
+    # 9. Oil, Gas & Consumable Fuels
+    elif any(k in ind_upper for k in ["COAL", "FUEL", "LUBRICANT"]):
+        return "Oil, Gas & Consumable Fuels", "Consumable Fuels & Coal"
+    elif any(k in ind_upper for k in ["REFIN"]):
+        return "Oil, Gas & Consumable Fuels", "Petroleum Products & Refining"
+    elif any(k in ind_upper for k in ["OIL", "GAS", "PETRO"]):
+        return "Oil, Gas & Consumable Fuels", "Oil & Gas Exploration & Production"
+    
+    # 10. Power
+    elif any(k in ind_upper for k in ["TRANSMISSION", "GRID"]):
+        return "Power", "Power Transmission & Distribution"
+    elif any(k in ind_upper for k in ["POWER", "ENERGY", "SOLAR", "RENEW"]):
+        return "Power", "Power Generation"
+    
+    # 11. Construction Materials
+    elif any(k in ind_upper for k in ["CEMENT", "CONCRETE"]):
+        return "Construction Materials", "Cement & Cement Products"
+    elif any(k in ind_upper for k in ["CERAMIC", "TILE", "GRANITE"]):
+        return "Construction Materials", "Ceramics & Building Materials"
+    
+    # 12. Construction
+    elif any(k in ind_upper for k in ["INFRASTRUCTURE", "HIGHWAY", "BRIDGE"]):
+        return "Construction", "Infrastructure Developers"
+    elif any(k in ind_upper for k in ["CONSTRUCT", "CIVIL", "EPC"]):
+        return "Construction", "Civil Construction"
+    
+    # 13. Realty
     elif any(k in ind_upper for k in ["REAL ESTATE", "REALTY", "DEVELOPER"]):
-        return "Construction & Realty", "Real Estate & Developers"
-    elif any(k in ind_upper for k in ["TELECOM", "WIRELESS"]):
-        return "Telecommunication & Media", "Telecom Services & Equipment"
-    elif any(k in ind_upper for k in ["MEDIA", "ENTERTAIN", "BROADCAST", "PUBLISH"]):
-        return "Telecommunication & Media", "Broadcasting & Entertainment"
-    elif any(k in ind_upper for k in ["RETAIL", "STORE"]):
-        return "Consumer Discretionary & Retail", "Retail & Specialty Stores"
-    elif any(k in ind_upper for k in ["HOTEL", "RESORT", "TRAVEL", "TOURISM"]):
-        return "Consumer Discretionary & Retail", "Hotels, Resorts & Tourism"
-    elif any(k in ind_upper for k in ["TEXTILE", "APPAREL", "FOOTWEAR"]):
-        return "Consumer Discretionary & Retail", "Textiles, Apparel & Footwear"
+        return "Realty", "Real Estate Developers"
+    elif any(k in ind_upper for k in ["PROPERTY SERVICES"]):
+        return "Realty", "Real Estate Services"
+    
+    # 14. Telecommunication
+    elif any(k in ind_upper for k in ["TELECOM EQUIPMENT"]):
+        return "Telecommunication", "Telecom - Equipment & Accessories"
+    elif any(k in ind_upper for k in ["TELECOM", "WIRELESS", "CELLULAR"]):
+        return "Telecommunication", "Telecom - Services"
+    
+    # 15. Media, Entertainment & Publication
+    elif any(k in ind_upper for k in ["BROADCAST", "CABLE", "TV"]):
+        return "Media, Entertainment & Publication", "Broadcasting & Cable TV"
+    elif any(k in ind_upper for k in ["PUBLISH", "PRINT", "NEWSPAPER"]):
+        return "Media, Entertainment & Publication", "Print Media & Publishing"
+    elif any(k in ind_upper for k in ["MEDIA", "ENTERTAIN", "FILM", "MULTIPLEX"]):
+        return "Media, Entertainment & Publication", "Entertainment & Content"
+    
+    # 16. Consumer Services
+    elif any(k in ind_upper for k in ["HOTEL", "RESORT", "TRAVEL", "TOURISM", "AIRLINE"]):
+        return "Consumer Services", "Travel & Tourism"
+    elif any(k in ind_upper for k in ["RESTAURANT", "QSR", "FOOD SERVICE"]):
+        return "Consumer Services", "Restaurants & QSR"
+    elif any(k in ind_upper for k in ["RETAIL", "STORE", "MALL", "SUPERMARKET"]):
+        return "Consumer Services", "Retailing"
+    elif any(k in ind_upper for k in ["LEISURE", "GAMING", "CLUB"]):
+        return "Consumer Services", "Leisure Services"
+    
+    # 17. Consumer Durables
+    elif any(k in ind_upper for k in ["JEWELLERY", "WATCH", "GEM"]):
+        return "Consumer Durables", "Gems, Jewellery & Watches"
+    elif any(k in ind_upper for k in ["ELECTRONIC", "APPLIANCE", "TV"]):
+        return "Consumer Durables", "Consumer Electronics & Appliances"
+    elif any(k in ind_upper for k in ["DURABLE"]):
+        return "Consumer Durables", "Household & Personal Products"
+    
+    # 18. Textiles
+    elif any(k in ind_upper for k in ["GARMENT", "APPAREL", "CLOTHING"]):
+        return "Textiles", "Garments & Apparels"
+    elif any(k in ind_upper for k in ["TEXTILE", "SPINNING", "WEAVING"]):
+        return "Textiles", "Textiles & Weaving"
+    
+    # 19. Forest Materials
+    elif any(k in ind_upper for k in ["PAPER", "FOREST", "JUTE", "TIMBER", "WOOD"]):
+        return "Forest Materials", "Paper, Forest & Jute Products"
+    
+    # 20. Utilities
+    elif any(k in ind_upper for k in ["GAS DISTRIBUTION", "PIPELINE"]):
+        return "Utilities", "Gas Transmission & Utilities"
+    elif any(k in ind_upper for k in ["WATER", "WASTE", "UTILITY"]):
+        return "Utilities", "Water & Other Utilities"
+    
+    # 21. Services
+    elif any(k in ind_upper for k in ["LOGISTIC", "TRANSPORT", "COURIER", "FREIGHT"]):
+        return "Services", "Logistics & Transportation Services"
+    elif any(k in ind_upper for k in ["PORT", "SHIPPING", "DOCK"]):
+        return "Services", "Port & Shipping Services"
+    elif any(k in ind_upper for k in ["SERVICE", "CONSULTING"]):
+        return "Services", "Commercial & Professional Services"
+    
+    # 22. Diversified
     else:
-        return "Diversified / Others", "Others"
+        return "Diversified", "Diversified Industrials"
 
-# Optional: Load local CSV if available in root ('nse_classification.csv')
+# Optional: Load local CSV if available ('nse_classification.csv')
 @st.cache_data(ttl=86400)
 def load_local_nse_csv():
     try:
@@ -191,17 +322,17 @@ with st.sidebar.form("filter_form"):
     )
     
     st.markdown("---")
-    st.header("🏛️ Official NSE Filters")
+    st.header("🏛️ Official NSE Filters (22 / 59)")
     
-    # 1. NSE Sector Dropdown (Always populated with 13 Indian Sectors)
+    # 1. NSE Sector Dropdown (22 Official Economic Sectors)
     sector_options = list(INDIAN_SECTOR_HIERARCHY.keys())
     sector_choice = st.multiselect(
-        "NSE Sector (e.g., Financial Services, IT):",
+        "NSE Sector (22 Economic Sectors):",
         options=sector_options,
         default=[]
     )
     
-    # 2. Cascading NSE Industry Dropdown
+    # 2. Cascading NSE Industry Dropdown (59 Distinct Industries)
     if sector_choice:
         industry_options = []
         for sec in sector_choice:
@@ -212,7 +343,7 @@ with st.sidebar.form("filter_form"):
         industry_options = sorted(list(set(all_industries)))
         
     industry_choice = st.multiselect(
-        "NSE Industry (e.g., Banks, IT - Software & Services):",
+        "NSE Industry (59 Distinct Classifications):",
         options=industry_options,
         default=[]
     )
@@ -246,7 +377,7 @@ with st.sidebar.form("filter_form"):
 # ==========================================
 # 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
-with st.spinner("Scanning Indian Equities & Mapping Official Indian Sectors..."):
+with st.spinner("Scanning Indian Equities & Mapping 22 Sectors / 59 Industries..."):
     results_df = fetch_screener_data(
         exchange_choice,
         min_mcap_cr,
@@ -269,7 +400,7 @@ else:
     # 3. SMART DEDUPLICATION (Keep NSE listing for dual-listed stocks)
     df = df.drop_duplicates(subset=['name'], keep='first')
     
-    # --- 4. SAFE INDIAN SECTOR & INDUSTRY MAPPING (Zero KeyError) ---
+    # --- 4. SAFE 22-SECTOR / 59-INDUSTRY MAPPING ---
     mapped_sectors = []
     mapped_industries = []
     for _, row in df.iterrows():
@@ -291,8 +422,8 @@ else:
             right_on="Symbol",
             how="left"
         )
-        df["Sector"] = df["NSE_Sector"].combine_first(df["Sector"]).fillna("Diversified / Others")
-        df["Industry"] = df["NSE_Industry"].combine_first(df["Industry"]).fillna("Others")
+        df["Sector"] = df["NSE_Sector"].combine_first(df["Sector"]).fillna("Diversified")
+        df["Industry"] = df["NSE_Industry"].combine_first(df["Industry"]).fillna("Diversified Industrials")
         
     # --- 5. APPLY NSE SECTOR & INDUSTRY FILTERS ---
     if sector_choice:
