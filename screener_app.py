@@ -18,6 +18,12 @@ st.set_page_config(
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
+# Counters to programmatically reset dataframe check selection states
+if "scan_sel_counter" not in st.session_state:
+    st.session_state.scan_sel_counter = 0
+if "wl_sel_counter" not in st.session_state:
+    st.session_state.wl_sel_counter = 0
+
 # Persistent Watchlist Storage in Session State
 if "watchlists" not in st.session_state:
     st.session_state.watchlists = {
@@ -535,9 +541,7 @@ with tab_screener:
                         st.session_state.reset_counter += 1
                         st.rerun()
 
-            # --- SERIAL NUMBER ADDED ---
             df_display['S.No.'] = range(1, len(df_display) + 1)
-            
             df_display['Market Cap (₹ Cr)'] = (df_display['market_cap_basic'] / 10_000_000).round(2)
             vol_display_label = f"{vol_period_days}D Close×AvgVol (₹ Cr)"
             df_display[vol_display_label] = (df_display['val_traded_inr'] / 10_000_000).round(2)
@@ -564,10 +568,11 @@ with tab_screener:
             ]
 
             # ------------------------------------------
-            # SCAN RESULTS TABLE
+            # SCAN RESULTS TABLE & ACTIONS
             # ------------------------------------------
             st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
             
+            sc = st.session_state.scan_sel_counter
             table_ev_scan = st.dataframe(
                 df_display[table_columns], 
                 use_container_width=True, 
@@ -577,19 +582,19 @@ with tab_screener:
                 column_config={
                     "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart")
                 },
-                key=f"scan_table_{rc}"
+                key=f"scan_table_{rc}_{sc}"
             )
             
             selected_rows = parse_table_selection_multi(table_ev_scan, df_display, "TV_Symbol")
             
-            # 1-CLICK ADD SELECTED TO WATCHLIST
+            # ACTION BAR: WATCHLIST ADD + CLEAR SELECTION
             st.markdown("---")
-            cw1, cw2, cw3 = st.columns([1.8, 1.5, 1.2])
+            cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 1.2, 1.0])
             with cw1:
                 target_wl = st.selectbox("Select Target Watchlist to Add Setups:", options=list(st.session_state.watchlists.keys()), index=list(st.session_state.watchlists.keys()).index(st.session_state.active_watchlist_name), key="wl_table_target_select")
             with cw2:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button(f"➕ Add Selected Setups ({len(selected_rows)}) to Watchlist", type="primary", use_container_width=True, disabled=len(selected_rows)==0):
+                if st.button(f"➕ Add Selected ({len(selected_rows)}) to Watchlist", type="primary", use_container_width=True, disabled=len(selected_rows)==0):
                     current_list = st.session_state.watchlists[target_wl]
                     added_cnt = 0
                     for sym in selected_rows:
@@ -599,9 +604,14 @@ with tab_screener:
                     st.success(f"✅ Successfully added {added_cnt} new stocks to **{target_wl}**!")
             with cw3:
                 st.markdown("<br>", unsafe_allow_html=True)
-                st.caption("💡 Check rows above to enable bulk quick-add.")
+                if st.button("🧹 Clear Selection", type="secondary", use_container_width=True, disabled=len(selected_rows)==0, key="clear_scan_sel_btn"):
+                    st.session_state.scan_sel_counter += 1
+                    st.rerun()
+            with cw4:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.caption("💡 Check rows above to enable actions.")
 
-            # --- SELECTIVE vs ALL TRADINGVIEW EXPORT ---
+            # SELECTIVE vs ALL TRADINGVIEW EXPORT
             st.markdown("---")
             if len(selected_rows) > 0:
                 st.subheader(f"📋 Copy Selected Setups to TradingView ({len(selected_rows)} Stocks)")
@@ -695,7 +705,6 @@ with tab_watchlists:
             for col_name in ['name', 'Close', 'Change %', 'ADR_pct', 'Market Cap (₹ Cr)', 'Sector', 'Industry']:
                 merged_df[col_name] = "N/A"
 
-        # --- SERIAL NUMBER ADDED TO WATCHLIST ---
         merged_df['S.No.'] = range(1, len(merged_df) + 1)
         merged_df['ADR %'] = merged_df.get('ADR_pct', "N/A")
         
@@ -705,6 +714,7 @@ with tab_watchlists:
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
 
+        wsc = st.session_state.wl_sel_counter
         wl_table_event = st.dataframe(
             merged_df[wl_cols],
             use_container_width=True,
@@ -715,15 +725,21 @@ with tab_watchlists:
             column_config={
                 "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart")
             },
-            key="wl_manage_table"
+            key=f"wl_manage_table_{wsc}"
         )
 
         sel_to_remove = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
-        if sel_to_remove:
-            if st.button(f"🗑️ Remove Selected ({len(sel_to_remove)}) from '{active_wl}'", type="secondary"):
+        
+        col_wl_act1, col_wl_act2 = st.columns([1.5, 1.2])
+        with col_wl_act1:
+            if st.button(f"🗑️ Remove Selected ({len(sel_to_remove)}) from '{active_wl}'", type="secondary", disabled=len(sel_to_remove)==0):
                 for sym in sel_to_remove:
                     if sym in st.session_state.watchlists[active_wl]:
                         st.session_state.watchlists[active_wl].remove(sym)
+                st.rerun()
+        with col_wl_act2:
+            if st.button("🧹 Clear Selection", type="secondary", disabled=len(sel_to_remove)==0, key="clear_wl_sel_btn"):
+                st.session_state.wl_sel_counter += 1
                 st.rerun()
 
         st.markdown("---")
