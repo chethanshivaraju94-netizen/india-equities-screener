@@ -1,14 +1,6 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from tradingview_screener import Query, col
-
-# Safely import yfinance without crashing Streamlit if missing from requirements.txt
-try:
-    import yfinance as yf
-    YFINANCE_AVAILABLE = True
-except ImportError:
-    YFINANCE_AVAILABLE = False
 
 # Set Streamlit Page Configuration
 st.set_page_config(
@@ -18,10 +10,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed, **5 Custom MAs**, **True Pine Script ADR% Engine**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
-
-if not YFINANCE_AVAILABLE:
-    st.info("💡 **Tip:** To enable exact bar-by-bar Pine Script ADR% calculations, add `yfinance` to your repository's `requirements.txt` file.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -98,6 +87,7 @@ INDIAN_SECTOR_HIERARCHY = {
     ]
 }
 
+# 100% Deterministic Lookup Table for all 84 TradingView India Sector/Industry pairs
 TV_TO_INDIAN_MAP = {
     ('Commercial Services', 'Financial Publishing/Services'): ('Financial Services', 'Capital Markets'),
     ('Commercial Services', 'Miscellaneous Commercial Services'): ('Services', 'Commercial & Professional Services'),
@@ -192,35 +182,7 @@ def map_to_indian_classification(tv_industry, tv_sector):
     return "Diversified", "Diversified Commercial Services"
 
 # ==========================================
-# 2. EXACT PINE SCRIPT ADR% ENGINE
-# ==========================================
-@st.cache_data(ttl=3600)
-def calculate_true_pine_adr(symbol, exchange, length):
-    """
-    Computes exact bar-by-bar Pine Script ADR%:
-    SMA((High - Low) / Low * 100, length)
-    """
-    if not YFINANCE_AVAILABLE:
-        return np.nan
-        
-    suffix = ".NS" if exchange == "NSE" else ".BO"
-    ticker = f"{symbol}{suffix}"
-    try:
-        data = yf.download(ticker, period="3mo", interval="1d", progress=False)
-        if data.empty or len(data) < length:
-            return np.nan
-        
-        high = data["High"].squeeze()
-        low = data["Low"].squeeze()
-        
-        daily_range_pct = ((high - low) / low) * 100
-        true_adr_pct = daily_range_pct.tail(length).mean()
-        return round(float(true_adr_pct), 2)
-    except Exception:
-        return np.nan
-
-# ==========================================
-# 3. BACKEND SCREENER LOGIC
+# 2. BACKEND SCREENER LOGIC
 # ==========================================
 def fetch_screener_data(exchanges, min_mcap, ma_columns_to_fetch, limit_rows):
     if not exchanges:
@@ -228,6 +190,7 @@ def fetch_screener_data(exchanges, min_mcap, ma_columns_to_fetch, limit_rows):
     
     min_mcap_inr = min_mcap * 10_000_000
     
+    # Base columns fetched in a single high-speed query
     select_cols = [
         'name', 'close', 'change', 'volume', 'market_cap_basic',
         'average_volume_60d_calc', 'ADR', 'price_52_week_high',
@@ -254,7 +217,7 @@ def fetch_screener_data(exchanges, min_mcap, ma_columns_to_fetch, limit_rows):
         return pd.DataFrame()
 
 # ==========================================
-# 4. SIDEBAR CONTROLS
+# 3. SIDEBAR CONTROLS
 # ==========================================
 with st.sidebar.form("filter_form"):
     st.header("1. Exchange & Universe")
@@ -312,19 +275,10 @@ with st.sidebar.form("filter_form"):
             "enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"
         })
 
-    # --- CUSTOM ADR LENGTH & PINE SCRIPT TOGGLE ---
+    # --- INSTANT TRADINGVIEW ADR% FILTER ---
     st.markdown("---")
     st.header("4. Volatility & 52-Week Range")
-    adr_length = st.number_input("ADR Length (Days):", min_value=1, max_value=100, value=20, step=1)
-    
-    use_exact_pine = st.checkbox(
-        "⚡ Calculate Exact Pine Script ADR%", 
-        value=YFINANCE_AVAILABLE,
-        disabled=not YFINANCE_AVAILABLE,
-        help="Bypasses TV API's fixed 14-period limitation by computing exact SMA((H-L)/L, length)*100 bar-by-bar."
-    )
-    
-    min_adr = st.slider("Min ADR %:", min_value=0.0, max_value=10.0, value=2.25, step=0.25)
+    min_adr = st.slider("Min ADR % (TradingView Standard):", min_value=0.0, max_value=10.0, value=2.25, step=0.25)
     min_above_52l = st.slider("Min % Above 52-Week Low:", min_value=0, max_value=100, value=20, step=5)
     max_below_52h = st.slider("Max % Below 52-Week High:", min_value=0, max_value=50, value=30, step=5)
 
@@ -335,11 +289,11 @@ with st.sidebar.form("filter_form"):
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
 # ==========================================
-# 5. FETCH, ENRICH & FILTER DATA
+# 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
 ma_cols_to_fetch = list(set([m["col_name"] for m in ma_filters]))
 
-with st.spinner("Scanning Indian Equities & Applying Custom Filters..."):
+with st.spinner("⚡ Scanning Indian Equities & Calculating Instant ADR%..."):
     results_df = fetch_screener_data(exchange_choice, min_mcap_cr, ma_cols_to_fetch, max_results)
 
 if results_df.empty:
@@ -351,7 +305,7 @@ else:
         df = df[df['type'] == 'stock']
     df = df.drop_duplicates(subset=['name'], keep='first')
     
-    # Map Indian Sectors
+    # Map Indian Sectors (84-pair lookup table)
     mapped_sectors, mapped_industries = [], []
     for _, row in df.iterrows():
         sec, ind = map_to_indian_classification(row.get("industry", ""), row.get("sector", ""))
@@ -370,21 +324,12 @@ else:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce')
             
-    # --- TRUE ADR% ENGINE ---
-    if use_exact_pine and YFINANCE_AVAILABLE:
-        with st.spinner(f"Computing exact bar-by-bar {adr_length}-day Pine Script ADR%..."):
-            adr_values = []
-            for idx, row in df.iterrows():
-                val = calculate_true_pine_adr(row['name'], row['exchange'], adr_length)
-                adr_values.append(val)
-            df['ADR_pct'] = adr_values
-            df['ADR_pct'] = df['ADR_pct'].fillna((df['ADR'] / df['close']) * 100)
-    else:
-        df['ADR_pct'] = (df['ADR'] / df['close']) * 100
-        
+    # --- INSTANT VECTORIZED ADR% CALCULATION (< 0.01s) ---
+    # Convert TradingView's native Rupee ADR into a percentage of Close Price
+    df['ADR_pct'] = (df['ADR'] / df['close']) * 100
     df = df[df['ADR_pct'] >= min_adr]
             
-    # Apply MAs
+    # Apply Custom Moving Averages
     for ma in ma_filters:
         c_name = ma["col_name"]
         if ma["enabled"] and c_name in df.columns:
@@ -409,7 +354,7 @@ else:
         df['60D Vol (₹ Cr)'] = (df['val_traded_60d_inr'] / 10_000_000).round(2)
         df['Close'] = df['close'].round(2)
         df['Change %'] = df['change'].round(2)
-        df[f'ADR ({adr_length}D) %'] = df['ADR_pct'].round(2)
+        df['ADR %'] = df['ADR_pct'].round(2)
         df['TV_Symbol'] = df['exchange'] + ":" + df['name']
         
         active_ma_labels = []
@@ -420,7 +365,7 @@ else:
         
         table_columns = [
             'TV_Symbol', 'name', 'Close', 'Change %', 
-            f'ADR ({adr_length}D) %'
+            'ADR %'
         ] + active_ma_labels + [
             '60D Vol (₹ Cr)', 'Market Cap (₹ Cr)', 
             'Sector', 'Industry'
