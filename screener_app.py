@@ -324,7 +324,7 @@ else:
     df["Sector"] = mapped_sectors
     df["Industry"] = mapped_industries
     
-    # Track Total Universe Counts per Sector and Industry (to calculate % passed)
+    # Track Total Universe Counts per Sector and Industry (before any technical filtering)
     total_sector_counts = df['Sector'].value_counts()
     total_industry_counts = df['Industry'].value_counts()
         
@@ -376,6 +376,13 @@ else:
         with tab_sector:
             sec_counts = df['Sector'].value_counts().reset_index()
             sec_counts.columns = ['Sector', 'Number of Stocks Passed']
+            
+            # 1. Share of Passed Stocks (Donut chart slice percentage - sums to 100%)
+            sec_counts['% Share of Passed Stocks'] = (
+                (sec_counts['Number of Stocks Passed'] / total_passed) * 100
+            ).round(1)
+            
+            # 2. Sector Breadth Percentage (Passed in Sector ÷ Total Universe in Sector)
             sec_counts['% of Stocks Passed Amongst Total Stocks in the Sector'] = sec_counts.apply(
                 lambda r: round((r['Number of Stocks Passed'] / total_sector_counts.get(r['Sector'], 1)) * 100, 1),
                 axis=1
@@ -393,10 +400,12 @@ else:
                 fig_sec.update_layout(
                     annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)],
                     showlegend=False,
-                    margin=dict(t=20, b=20, l=20, r=20),
+                    margin=dict(t=20, b=10, l=20, r=20),
                     height=360
                 )
                 st.plotly_chart(fig_sec, use_container_width=True)
+                st.caption("Note: All Percentages are Based on the Total Number of Passed Stocks")
+                
             with c_table1:
                 st.dataframe(sec_counts, use_container_width=True, hide_index=True, height=360)
 
@@ -404,6 +413,13 @@ else:
         with tab_industry:
             ind_counts = df['Industry'].value_counts().reset_index()
             ind_counts.columns = ['Basic Industry', 'Number of Stocks Passed']
+            
+            # 1. Share of Passed Stocks (Donut chart slice percentage - sums to 100%)
+            ind_counts['% Share of Passed Stocks'] = (
+                (ind_counts['Number of Stocks Passed'] / total_passed) * 100
+            ).round(1)
+            
+            # 2. Industry Breadth Percentage (Passed in Industry ÷ Total Universe in Industry)
             ind_counts['% of Stocks Passed Amongst Total Stocks in the Industry'] = ind_counts.apply(
                 lambda r: round((r['Number of Stocks Passed'] / total_industry_counts.get(r['Basic Industry'], 1)) * 100, 1),
                 axis=1
@@ -421,10 +437,12 @@ else:
                 fig_ind.update_layout(
                     annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)],
                     showlegend=False,
-                    margin=dict(t=20, b=20, l=20, r=20),
+                    margin=dict(t=20, b=10, l=20, r=20),
                     height=360
                 )
                 st.plotly_chart(fig_ind, use_container_width=True)
+                st.caption("Note: All Percentages are Based on the Total Number of Passed Stocks")
+                
             with c_table2:
                 st.dataframe(ind_counts, use_container_width=True, hide_index=True, height=360)
 
