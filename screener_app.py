@@ -345,7 +345,7 @@ else:
         if ma["enabled"] and c_name in df.columns:
             df = df[df['close'] > df[c_name]]
         
-    # --- RUPEE VOLUME FILTER ---
+    # --- RUPEE VOLUME FILTER (Today's Close × Nd Avg Volume) ---
     if tv_vol_col in df.columns:
         df['val_traded_inr'] = df['close'] * df[tv_vol_col]
         df = df[df['val_traded_inr'] >= (min_vol_cr * 10_000_000)]
@@ -363,8 +363,8 @@ else:
     else:
         df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
         
-        # Format Dynamic Table Label based on selected period
-        vol_display_label = f"{vol_period_days}D Vol (₹ Cr)"
+        # Explicitly label column as Today's Close × Nd Avg Vol
+        vol_display_label = f"{vol_period_days}D Close×AvgVol (₹ Cr)"
         df[vol_display_label] = (df['val_traded_inr'] / 10_000_000).round(2)
         
         df['Close'] = df['close'].round(2)
