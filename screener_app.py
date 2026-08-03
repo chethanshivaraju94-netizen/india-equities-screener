@@ -19,7 +19,7 @@ if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Interactive Click-to-Filter Rotation Donut Charts**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Hierarchical Sector → Industry Drilldown**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -462,13 +462,24 @@ else:
                 st.session_state.drilldown_type = "Sector"
                 st.session_state.drilldown_val = sel_sec_table
 
-        # --- TAB 2: INDUSTRY SUMMARY ---
+        # --- TAB 2: INDUSTRY SUMMARY (HIERARCHICALLY FILTERED BY SECTOR) ---
         with tab_industry:
-            ind_counts = df['Industry'].value_counts().reset_index()
+            # If a Sector is selected, show ONLY Basic Industries belonging to that Sector!
+            if st.session_state.drilldown_type == "Sector" and st.session_state.drilldown_val:
+                df_ind_source = df[df['Sector'] == st.session_state.drilldown_val]
+                ind_total_passed = len(df_ind_source)
+                st.info(f"🏢 **Hierarchical View:** Showing Basic Industries inside **{st.session_state.drilldown_val}** ({ind_total_passed} Stocks)")
+            else:
+                df_ind_source = df
+                ind_total_passed = total_passed
+                
+            ind_counts = df_ind_source['Industry'].value_counts().reset_index()
             ind_counts.columns = ['Basic Industry', 'Number of Stocks Passed']
+            
             ind_counts['% Share of Passed Stocks'] = (
-                (ind_counts['Number of Stocks Passed'] / total_passed) * 100
+                (ind_counts['Number of Stocks Passed'] / max(ind_total_passed, 1)) * 100
             ).round(1)
+            
             ind_counts['% of Stocks Passed Amongst Total Stocks in the Industry'] = ind_counts.apply(
                 lambda r: round((r['Number of Stocks Passed'] / total_industry_counts.get(r['Basic Industry'], 1)) * 100, 1),
                 axis=1
@@ -484,7 +495,7 @@ else:
                 )
                 fig_ind.update_traces(textinfo='percent', textposition='inside')
                 fig_ind.update_layout(
-                    annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)],
+                    annotations=[dict(text=f"<b>Total Stocks:<br>{ind_total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)],
                     showlegend=False,
                     margin=dict(t=20, b=10, l=20, r=20),
                     height=360
