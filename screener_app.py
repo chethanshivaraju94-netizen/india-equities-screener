@@ -11,11 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize Session State for Interactive Drilldown & Widget Reset
-if "drilldown_type" not in st.session_state:
-    st.session_state.drilldown_type = None
-if "drilldown_vals" not in st.session_state:
-    st.session_state.drilldown_vals = []
+# Initialize Session State for Widget Reset Counter
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
@@ -337,11 +333,6 @@ with st.sidebar.form("filter_form"):
     
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
-# Reset drilldown when new filters are applied from sidebar
-if apply_filters:
-    st.session_state.drilldown_type = None
-    st.session_state.drilldown_vals = []
-
 # ==========================================
 # 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
@@ -465,23 +456,17 @@ else:
                     key=f"sec_table_{rc}"
                 )
             
-            # Detect Sector Multi-Click (Chart or Table)
+            # 1. Resolve Active Sectors
             sel_sec_chart = parse_chart_selection_multi(chart_ev_sec)
             sel_sec_table = parse_table_selection_multi(table_ev_sec, sec_counts, "Sector")
-            
-            if sel_sec_chart:
-                st.session_state.drilldown_type = "Sector"
-                st.session_state.drilldown_vals = sel_sec_chart
-            elif sel_sec_table:
-                st.session_state.drilldown_type = "Sector"
-                st.session_state.drilldown_vals = sel_sec_table
+            active_sectors = sel_sec_table if sel_sec_table else sel_sec_chart
 
-        # --- TAB 2: INDUSTRY SUMMARY (HIERARCHICALLY FILTERED BY MULTI-SECTORS) ---
+        # --- TAB 2: INDUSTRY SUMMARY (HIERARCHICAL & ISOLATED) ---
         with tab_industry:
-            if st.session_state.drilldown_type == "Sector" and st.session_state.drilldown_vals:
-                df_ind_source = df[df['Sector'].isin(st.session_state.drilldown_vals)]
+            if active_sectors:
+                df_ind_source = df[df['Sector'].isin(active_sectors)]
                 ind_total_passed = len(df_ind_source)
-                sec_list_str = ", ".join(st.session_state.drilldown_vals)
+                sec_list_str = ", ".join(active_sectors)
                 st.info(f"🏢 **Hierarchical View:** Showing Basic Industries inside **{sec_list_str}** ({ind_total_passed} Stocks)")
             else:
                 df_ind_source = df
@@ -498,6 +483,9 @@ else:
                 lambda r: round((r['Number of Stocks Passed'] / total_industry_counts.get(r['Basic Industry'], 1)) * 100, 1),
                 axis=1
             )
+            
+            # Dynamic Key Hash: Prevents stale row selection when Sector selection changes
+            sec_hash = "_".join(sorted(active_sectors)) if active_sectors else "all"
             
             c_chart2, c_table2 = st.columns([1.1, 1.3])
             with c_chart2:
@@ -519,7 +507,7 @@ else:
                     use_container_width=True, 
                     on_select="rerun", 
                     selection_mode="points", 
-                    key=f"ind_chart_{rc}"
+                    key=f"ind_chart_{rc}_{sec_hash}"
                 )
                 st.caption("Note: All Percentages are Based on the Total Number of Passed Stocks")
                 
@@ -531,19 +519,13 @@ else:
                     height=360,
                     on_select="rerun",
                     selection_mode="multi-row",
-                    key=f"ind_table_{rc}"
+                    key=f"ind_table_{rc}_{sec_hash}"
                 )
                 
-            # Detect Industry Multi-Click (Chart or Table)
+            # 2. Resolve Active Industries
             sel_ind_chart = parse_chart_selection_multi(chart_ev_ind)
             sel_ind_table = parse_table_selection_multi(table_ev_ind, ind_counts, "Basic Industry")
-            
-            if sel_ind_chart:
-                st.session_state.drilldown_type = "Industry"
-                st.session_state.drilldown_vals = sel_ind_chart
-            elif sel_ind_table:
-                st.session_state.drilldown_type = "Industry"
-                st.session_state.drilldown_vals = sel_ind_table
+            active_industries = sel_ind_table if sel_ind_table else sel_ind_chart
 
         # ==========================================
         # 6. ACTIVE DRILLDOWN BANNER & FILTERING
@@ -551,20 +533,29 @@ else:
         st.markdown("---")
         df_display = df.copy()
         
-        if st.session_state.drilldown_vals:
-            selected_items_str = ", ".join(st.session_state.drilldown_vals)
+        # Apply Sector filter if active
+        if active_sectors:
+            df_display = df_display[df_display['Sector'].isin(active_sectors)]
+        # Apply Industry filter if active
+        if active_industries:
+            df_display = df_display[df_display['Industry'].isin(active_industries)]
+            
+        if active_sectors or active_industries:
+            filter_labels = []
+            if active_sectors:
+                filter_labels.append(f"**Sector:** {', '.join(active_sectors)}")
+            if active_industries:
+                filter_labels.append(f"**Industry:** {', '.join(active_industries)}")
+            
+            banner_text = " | ".join(filter_labels)
+            
             col_info, col_reset = st.columns([3, 1])
             with col_info:
-                st.info(f"🔍 **Active Drilldown:** Showing only stocks in **{st.session_state.drilldown_type} — {selected_items_str}**")
+                st.info(f"🔍 **Active Drilldown:** {banner_text} ({len(df_display)} Stocks)")
             with col_reset:
                 if st.button("🔄 Reset Scan Results (Show All)", type="primary", use_container_width=True):
-                    st.session_state.drilldown_type = None
-                    st.session_state.drilldown_vals = []
                     st.session_state.reset_counter += 1
                     st.rerun()
-            
-            # Apply dynamic multi-selection filter to DataFrame
-            df_display = df_display[df_display[st.session_state.drilldown_type].isin(st.session_state.drilldown_vals)]
         else:
             st.caption("💡 **Tip:** Select one or more sectors/industries from the tables above to filter the stock list.")
 
@@ -596,7 +587,7 @@ else:
 
         c_header, c_toggle = st.columns([2.5, 1.5])
         with c_header:
-            if st.session_state.drilldown_vals:
+            if active_sectors or active_industries:
                 st.subheader(f"📋 Scan Results ({len(df_display)} Stocks in Selected Group)")
             else:
                 st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
