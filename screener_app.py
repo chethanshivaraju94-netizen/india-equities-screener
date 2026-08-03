@@ -648,12 +648,17 @@ else:
                         active_symbol = watchlist_df.iloc[0]['TV_Symbol']
 
                 with col_chart:
+                    # 1. Widget Ticker: Automatically route via BSE: to bypass free-tier iframe restrictions
+                    ticker_only = active_symbol.split(":")[-1]
+                    widget_symbol = f"BSE:{ticker_only}"
+
+                    # 2. Deep-link Ticker: Point directly to official NSE: symbol for your Pine Scripts
+                    deep_link_url = f"https://www.tradingview.com/chart/?symbol=NSE:{ticker_only}"
+
                     c_title, c_link = st.columns([2.5, 1.5])
                     with c_title:
                         st.markdown(f"### 📈 {active_symbol} — Advanced Candle Chart")
                     with c_link:
-                        # Deep-link bridge to personal TV account with custom Pine Scripts
-                        deep_link_url = f"https://www.tradingview.com/chart/?symbol={active_symbol}"
                         st.markdown(
                             f'<a href="{deep_link_url}" target="_blank" style="display:inline-block;padding:0.4rem 0.8rem;background-color:#2962FF;color:white;text-decoration:none;border-radius:4px;font-weight:bold;float:right;">↗️ Open in TradingView App</a>',
                             unsafe_allow_html=True
@@ -669,7 +674,7 @@ else:
                       {{
                         "width": "100%",
                         "height": 560,
-                        "symbol": "{active_symbol}",
+                        "symbol": "{widget_symbol}",
                         "interval": "D",
                         "timezone": "Asia/Kolkata",
                         "theme": "dark",
