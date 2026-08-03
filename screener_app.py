@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 from tradingview_screener import Query, col
@@ -19,7 +20,7 @@ if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Hierarchical Multi-Select Sector → Industry Drilldown**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Hierarchical Multi-Select Sector → Industry Drilldown**, **Interactive Chart Mode Terminal**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -210,6 +211,16 @@ def parse_table_selection_multi(event, df_source, col_name):
                     selected_vals.append(df_source.iloc[idx][col_name])
             return selected_vals
     return []
+
+def parse_single_row_selection(event, df_source):
+    if event and isinstance(event, dict):
+        sel = event.get("selection", {})
+        rows = sel.get("rows", [])
+        if rows and len(rows) > 0:
+            idx = rows[0]
+            if idx < len(df_source):
+                return df_source.iloc[idx]
+    return None
 
 # ==========================================
 # 2. BACKEND SCREENER LOGIC
@@ -467,7 +478,6 @@ else:
 
         # --- TAB 2: INDUSTRY SUMMARY (HIERARCHICALLY FILTERED BY MULTI-SECTORS) ---
         with tab_industry:
-            # If one or more Sectors are selected, show ONLY Basic Industries inside those Sectors!
             if st.session_state.drilldown_type == "Sector" and st.session_state.drilldown_vals:
                 df_ind_source = df[df['Sector'].isin(st.session_state.drilldown_vals)]
                 ind_total_passed = len(df_ind_source)
@@ -559,10 +569,9 @@ else:
             st.caption("💡 **Tip:** Select one or more sectors/industries from the tables above to filter the stock list.")
 
         # ==========================================
-        # 7. DETAILED FILTERED TABLE & WATCHLIST
+        # 7. VIEW MODE SWITCHER: TABLE vs. CHART MODE
         # ==========================================
         df_display['Market Cap (₹ Cr)'] = (df_display['market_cap_basic'] / 10_000_000).round(2)
-        
         vol_display_label = f"{vol_period_days}D Close×AvgVol (₹ Cr)"
         df_display[vol_display_label] = (df_display['val_traded_inr'] / 10_000_000).round(2)
         
@@ -584,15 +593,101 @@ else:
             vol_display_label, 'Market Cap (₹ Cr)', 
             'Sector', 'Industry'
         ]
-        
-        if st.session_state.drilldown_vals:
-            st.subheader(f"📋 Filtered Stock Results ({len(df_display)} Stocks in Selected Group)")
-        else:
-            st.subheader(f"📋 Filtered Stock Results ({len(df_display)} Stocks Found)")
+
+        c_header, c_toggle = st.columns([2.5, 1.5])
+        with c_header:
+            if st.session_state.drilldown_vals:
+                st.subheader(f"📋 Scan Results ({len(df_display)} Stocks in Selected Group)")
+            else:
+                st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
+        with c_toggle:
+            view_mode = st.radio(
+                "Switch View Mode:", 
+                ["📋 Table View", "📊 Interactive Chart Mode"], 
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+
+        # --- MODE A: STANDARD TABLE VIEW ---
+        if view_mode == "📋 Table View":
+            st.dataframe(df_display[table_columns], use_container_width=True, hide_index=True)
             
-        st.dataframe(df_display[table_columns], use_container_width=True, hide_index=True)
-        
-        st.markdown("---")
-        st.subheader("📋 Copy to TradingView Watchlist")
-        tv_watchlist_string = ", ".join(df_display['TV_Symbol'].tolist())
-        st.code(tv_watchlist_string, language="text")
+            st.markdown("---")
+            st.subheader("📋 Copy to TradingView Watchlist")
+            tv_watchlist_string = ", ".join(df_display['TV_Symbol'].tolist())
+            st.code(tv_watchlist_string, language="text")
+
+        # --- MODE B: INTERACTIVE CHART MODE (WATCHLIST SIDEBAR + TV EMBED) ---
+        else:
+            if df_display.empty:
+                st.warning("No stocks available in chart mode for current selection.")
+            else:
+                col_watchlist, col_chart = st.columns([1.3, 3.7])
+                
+                with col_watchlist:
+                    st.markdown("#### ⚡ Watchlist Sidebar")
+                    st.caption("Click any ticker to load its interactive chart:")
+                    
+                    watchlist_df = df_display[['TV_Symbol', 'Close', 'Change %', 'ADR %']].copy()
+                    
+                    # Watchlist interactive selector
+                    watchlist_event = st.dataframe(
+                        watchlist_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=580,
+                        on_select="rerun",
+                        selection_mode="single-row",
+                        key=f"wl_table_{rc}"
+                    )
+                    
+                    selected_row = parse_single_row_selection(watchlist_event, watchlist_df)
+                    if selected_row is not None:
+                        active_symbol = selected_row['TV_Symbol']
+                    else:
+                        active_symbol = watchlist_df.iloc[0]['TV_Symbol']
+
+                with col_chart:
+                    c_title, c_link = st.columns([2.5, 1.5])
+                    with c_title:
+                        st.markdown(f"### 📈 {active_symbol} — Advanced Candle Chart")
+                    with c_link:
+                        # Deep-link bridge to personal TV account with custom Pine Scripts
+                        deep_link_url = f"https://www.tradingview.com/chart/?symbol={active_symbol}"
+                        st.markdown(
+                            f'<a href="{deep_link_url}" target="_blank" style="display:inline-block;padding:0.4rem 0.8rem;background-color:#2962FF;color:white;text-decoration:none;border-radius:4px;font-weight:bold;float:right;">↗️ Open in TradingView App</a>',
+                            unsafe_allow_html=True
+                        )
+                    
+                    # Official TradingView Advanced Chart Widget HTML/JS embed
+                    chart_widget_html = f"""
+                    <div class="tradingview-widget-container" style="height:580px;width:100%">
+                      <div id="tradingview_chart_container" style="height:100%;width:100%"></div>
+                      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+                      <script type="text/javascript">
+                      new TradingView.widget(
+                      {{
+                        "width": "100%",
+                        "height": 560,
+                        "symbol": "{active_symbol}",
+                        "interval": "D",
+                        "timezone": "Asia/Kolkata",
+                        "theme": "dark",
+                        "style": "1",
+                        "locale": "en",
+                        "toolbar_bg": "#f1f3f6",
+                        "enable_publishing": false,
+                        "withdateranges": true,
+                        "hide_side_toolbar": false,
+                        "allow_symbol_change": true,
+                        "details": true,
+                        "studies": [
+                          "STD;SMA"
+                        ],
+                        "container_id": "tradingview_chart_container"
+                      }}
+                      );
+                      </script>
+                    </div>
+                    """
+                    components.html(chart_widget_html, height=580, scrolling=False)
