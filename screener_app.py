@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Exact TradingView Rupee Turnover (`Value.Traded|N`)**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Exact TradingView Rupee Turnover (Price × Avg Vol)**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -190,13 +190,13 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
     
     min_mcap_inr = min_mcap * 10_000_000
     
-    # Official TradingView "Price x avg vol" Turnover field token
-    tv_val_col = f"Value.Traded|{vol_period_days}"
+    # Official TradingView "Price x avg vol" turnover columns
+    tv_val_col = f"average_value_traded_{vol_period_days}d_calc"
     tv_vol_col = f"average_volume_{vol_period_days}d_calc"
     
     select_cols = [
         'name', 'close', 'change', 'volume', 'market_cap_basic',
-        tv_val_col, 'Value.Traded', tv_vol_col, 'ADR', 'price_52_week_high',
+        tv_val_col, tv_vol_col, 'ADR', 'price_52_week_high',
         'price_52_week_low', 'exchange', 'type', 'industry', 'sector'
     ]
     
@@ -304,7 +304,7 @@ with st.sidebar.form("filter_form"):
 # 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
 ma_cols_to_fetch = list(set([m["col_name"] for m in ma_filters]))
-tv_val_col = f"Value.Traded|{vol_period_days}"
+tv_val_col = f"average_value_traded_{vol_period_days}d_calc"
 tv_vol_col = f"average_volume_{vol_period_days}d_calc"
 
 with st.spinner("⚡ Scanning Indian Equities & Matching TradingView Turnover..."):
@@ -333,7 +333,7 @@ else:
     if industry_choice:
         df = df[df["Industry"].isin(industry_choice)]
     
-    numeric_cols = ['market_cap_basic', 'close', 'change', 'volume', tv_val_col, 'Value.Traded', tv_vol_col, 'ADR', 'price_52_week_high', 'price_52_week_low'] + ma_cols_to_fetch
+    numeric_cols = ['market_cap_basic', 'close', 'change', 'volume', tv_val_col, tv_vol_col, 'ADR', 'price_52_week_high', 'price_52_week_low'] + ma_cols_to_fetch
     for c in numeric_cols:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce')
@@ -348,11 +348,10 @@ else:
         if ma["enabled"] and c_name in df.columns:
             df = df[df['close'] > df[c_name]]
         
-    # --- EXACT TRADINGVIEW TURNOVER FILTER (`Value.Traded|N`) ---
+    # --- EXACT TRADINGVIEW TURNOVER FILTER (Price × Avg Vol) ---
+    # Try using TV's exact value traded column; fallback to close*volume if field is missing
     if tv_val_col in df.columns and not df[tv_val_col].isna().all():
         df['val_traded_inr'] = df[tv_val_col]
-    elif 'Value.Traded' in df.columns and not df['Value.Traded'].isna().all():
-        df['val_traded_inr'] = df['Value.Traded']
     elif tv_vol_col in df.columns:
         df['val_traded_inr'] = df['close'] * df[tv_vol_col]
     else:
