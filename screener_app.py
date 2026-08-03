@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import json
@@ -29,7 +28,7 @@ if "active_watchlist_name" not in st.session_state:
     st.session_state.active_watchlist_name = "⭐ CAN SLIM Priority"
 
 st.title("📈 India Equities Screener & Watchlist Studio")
-st.markdown("Professional **CAN SLIM Screener**, **Hierarchical Sector → Industry Rotation**, **Multi-Watchlist Manager with Live ADR% Enrichment**, and **Keyboard-Navigable Chart Terminal**.")
+st.markdown("Professional **CAN SLIM Screener**, **Hierarchical Sector → Industry Rotation**, and **Multi-Watchlist Studio with Live ADR% Enrichment**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -221,16 +220,6 @@ def parse_table_selection_multi(event, df_source, col_name):
             return selected_vals
     return []
 
-def parse_single_row_selection(event, df_source):
-    if event and isinstance(event, dict):
-        sel = event.get("selection", {})
-        rows = sel.get("rows", [])
-        if rows and len(rows) > 0:
-            idx = rows[0]
-            if idx < len(df_source):
-                return df_source.iloc[idx]
-    return None
-
 # String cleaning helper for pasting from TradingView
 def parse_pasted_tickers(raw_text):
     if not raw_text:
@@ -401,7 +390,7 @@ st.session_state.active_watchlist_name = active_wl
 # ==========================================
 tab_screener, tab_watchlists = st.tabs([
     "🔎 CAN SLIM Screener & Rotation",
-    "⭐ Watchlist Studio & Charting Terminal"
+    "⭐ Watchlist Studio & TradingView Bridge"
 ])
 
 # ==========================================
@@ -554,6 +543,9 @@ with tab_screener:
             df_display['ADR %'] = df_display['ADR_pct'].round(2)
             df_display['TV_Symbol'] = df_display['exchange'] + ":" + df_display['name']
             
+            # Clickable TradingView Deep-Link for every row
+            df_display['TV_Link'] = "https://www.tradingview.com/chart/?symbol=NSE:" + df_display['name']
+            
             active_ma_labels = []
             for ma in ma_filters:
                 if ma["enabled"] and ma["col_name"] in df_display.columns:
@@ -565,112 +557,52 @@ with tab_screener:
                 'ADR %'
             ] + active_ma_labels + [
                 vol_display_label, 'Market Cap (₹ Cr)', 
-                'Sector', 'Industry'
+                'Sector', 'Industry', 'TV_Link'
             ]
 
             # ------------------------------------------
-            # VIEW MODE SWITCHER & RESULTS
+            # SCAN RESULTS TABLE
             # ------------------------------------------
-            c_header, c_toggle = st.columns([2.5, 1.5])
-            with c_header:
-                st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
-            with c_toggle:
-                view_mode = st.radio("Switch View Mode:", ["📋 Table View", "📊 Interactive Chart Mode"], horizontal=True, label_visibility="collapsed")
+            st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
+            
+            table_ev_scan = st.dataframe(
+                df_display[table_columns], 
+                use_container_width=True, 
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="multi-row",
+                column_config={
+                    "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart")
+                },
+                key=f"scan_table_{rc}"
+            )
+            
+            selected_rows = parse_table_selection_multi(table_ev_scan, df_display, "TV_Symbol")
+            st.markdown("---")
+            cw1, cw2, cw3 = st.columns([1.8, 1.5, 1.2])
+            with cw1:
+                target_wl = st.selectbox("Select Target Watchlist to Add Setups:", options=list(st.session_state.watchlists.keys()), index=list(st.session_state.watchlists.keys()).index(st.session_state.active_watchlist_name), key="wl_table_target_select")
+            with cw2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button(f"➕ Add Selected Setups ({len(selected_rows)}) to Watchlist", type="primary", use_container_width=True, disabled=len(selected_rows)==0):
+                    current_list = st.session_state.watchlists[target_wl]
+                    added_cnt = 0
+                    for sym in selected_rows:
+                        if sym not in current_list:
+                            current_list.append(sym)
+                            added_cnt += 1
+                    st.success(f"✅ Successfully added {added_cnt} new stocks to **{target_wl}**!")
+            with cw3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.caption("💡 Check rows above to enable bulk quick-add.")
 
-            if view_mode == "📋 Table View":
-                table_ev_scan = st.dataframe(
-                    df_display[table_columns], 
-                    use_container_width=True, 
-                    hide_index=True,
-                    on_select="rerun",
-                    selection_mode="multi-row",
-                    key=f"scan_table_{rc}"
-                )
-                
-                selected_rows = parse_table_selection_multi(table_ev_scan, df_display, "TV_Symbol")
-                st.markdown("---")
-                cw1, cw2, cw3 = st.columns([1.8, 1.5, 1.2])
-                with cw1:
-                    target_wl = st.selectbox("Select Target Watchlist to Add Setups:", options=list(st.session_state.watchlists.keys()), index=list(st.session_state.watchlists.keys()).index(st.session_state.active_watchlist_name), key="wl_table_target_select")
-                with cw2:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button(f"➕ Add Selected Setups ({len(selected_rows)}) to Watchlist", type="primary", use_container_width=True, disabled=len(selected_rows)==0):
-                        current_list = st.session_state.watchlists[target_wl]
-                        added_cnt = 0
-                        for sym in selected_rows:
-                            if sym not in current_list:
-                                current_list.append(sym)
-                                added_cnt += 1
-                        st.success(f"✅ Successfully added {added_cnt} new stocks to **{target_wl}**!")
-                with cw3:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    st.caption("💡 Check rows above to enable bulk quick-add.")
-
-            # --- MODE B: INTERACTIVE CHART MODE ---
-            else:
-                col_watchlist, col_chart = st.columns([1.3, 3.7])
-                with col_watchlist:
-                    st.markdown("#### ⚡ Watchlist Sidebar")
-                    st.caption("💡 **Click ticker text** or use **↑/↓ arrow keys** to switch chart:")
-                    watchlist_df = df_display[['TV_Symbol', 'Close', 'Change %', 'ADR %']].copy()
-                    watchlist_event = st.dataframe(watchlist_df, use_container_width=True, hide_index=True, height=620, on_select="rerun", selection_mode="single-row", key=f"wl_table_{rc}")
-                    selected_row = parse_single_row_selection(watchlist_event, watchlist_df)
-                    active_symbol = selected_row['TV_Symbol'] if selected_row is not None else watchlist_df.iloc[0]['TV_Symbol']
-
-                with col_chart:
-                    ticker_only = active_symbol.split(":")[-1]
-                    c_title, c_add, c_link = st.columns([1.8, 1.6, 1.1])
-                    with c_title:
-                        st.markdown(f"### 📈 {active_symbol}")
-                    
-                    # 1-CLICK INSTANT WATCHLIST TOGGLE WHILE BROWSING CHARTS
-                    with c_add:
-                        current_wl_list = st.session_state.watchlists[st.session_state.active_watchlist_name]
-                        in_watchlist = active_symbol in current_wl_list
-                        if in_watchlist:
-                            if st.button(f"✅ Saved in '{st.session_state.active_watchlist_name}' (Remove)", type="secondary", use_container_width=True):
-                                current_wl_list.remove(active_symbol)
-                                st.rerun()
-                        else:
-                            if st.button(f"⭐ Add to '{st.session_state.active_watchlist_name}'", type="primary", use_container_width=True):
-                                current_wl_list.append(active_symbol)
-                                st.rerun()
-
-                    with c_link:
-                        deep_link_url = f"https://www.tradingview.com/chart/?symbol=NSE:{ticker_only}"
-                        st.markdown(f'<a href="{deep_link_url}" target="_blank" style="display:inline-block;padding:0.4rem 0.8rem;background-color:#2962FF;color:white;text-decoration:none;border-radius:4px;font-weight:bold;float:right;margin-top:2px;">↗️ TradingView</a>', unsafe_allow_html=True)
-
-                    widget_symbol = f"BSE:{ticker_only}"
-                    chart_widget_html = f"""
-                    <div class="tradingview-widget-container" style="height:620px;width:100%;margin:0;padding:0;overflow:hidden;">
-                      <div id="tradingview_chart_container" style="height:620px;width:100%"></div>
-                      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-                      <script type="text/javascript">
-                      new TradingView.widget({{
-                        "autosize": true,
-                        "height": 620,
-                        "symbol": "{widget_symbol}",
-                        "interval": "D",
-                        "timezone": "Asia/Kolkata",
-                        "theme": "dark",
-                        "style": "1",
-                        "locale": "en",
-                        "toolbar_bg": "#f1f3f6",
-                        "enable_publishing": false,
-                        "withdateranges": true,
-                        "hide_side_toolbar": false,
-                        "allow_symbol_change": true,
-                        "details": true,
-                        "studies": ["STD;SMA", "STD;Volume"],
-                        "container_id": "tradingview_chart_container"
-                      }});
-                      </script>
-                    </div>
-                    """
-                    components.html(chart_widget_html, height=620, scrolling=False)
+            st.markdown("---")
+            st.subheader("📋 Copy All Results to TradingView Watchlist")
+            tv_watchlist_string = ", ".join(df_display['TV_Symbol'].tolist())
+            st.code(tv_watchlist_string, language="text")
 
 # ==========================================
-# TAB 2: WATCHLIST STUDIO & CHARTING TERMINAL
+# TAB 2: WATCHLIST STUDIO & TRADINGVIEW BRIDGE
 # ==========================================
 with tab_watchlists:
     st.subheader("⭐ Multi-Watchlist Studio & TradingView Bridge")
@@ -754,82 +686,35 @@ with tab_watchlists:
                 merged_df[col_name] = "N/A"
 
         merged_df['ADR %'] = merged_df.get('ADR_pct', "N/A")
-        wl_cols = ['TV_Symbol', 'Close', 'Change %', 'ADR %', 'Market Cap (₹ Cr)', 'Sector', 'Industry']
+        
+        # Clickable TradingView Deep-Link for Watchlist symbols
+        merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
+        wl_cols = ['TV_Symbol', 'Close', 'Change %', 'ADR %', 'Market Cap (₹ Cr)', 'Sector', 'Industry', 'TV_Link']
 
-        cw_head, cw_mode = st.columns([2.5, 1.5])
-        with cw_head:
-            st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
-        with cw_mode:
-            wl_view_mode = st.radio("Watchlist View Mode:", ["📋 Watchlist Table", "📊 Watchlist Chart Terminal"], horizontal=True, label_visibility="collapsed", key="wl_mode_radio")
+        st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
 
-        if wl_view_mode == "📋 Watchlist Table":
-            wl_table_event = st.dataframe(
-                merged_df[wl_cols],
-                use_container_width=True,
-                hide_index=True,
-                height=420,
-                on_select="rerun",
-                selection_mode="multi-row",
-                key="wl_manage_table"
-            )
+        wl_table_event = st.dataframe(
+            merged_df[wl_cols],
+            use_container_width=True,
+            hide_index=True,
+            height=460,
+            on_select="rerun",
+            selection_mode="multi-row",
+            column_config={
+                "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart")
+            },
+            key="wl_manage_table"
+        )
 
-            sel_to_remove = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
-            if sel_to_remove:
-                if st.button(f"🗑️ Remove Selected ({len(sel_to_remove)}) from '{active_wl}'", type="secondary"):
-                    for sym in sel_to_remove:
-                        if sym in st.session_state.watchlists[active_wl]:
-                            st.session_state.watchlists[active_wl].remove(sym)
-                    st.rerun()
+        sel_to_remove = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
+        if sel_to_remove:
+            if st.button(f"🗑️ Remove Selected ({len(sel_to_remove)}) from '{active_wl}'", type="secondary"):
+                for sym in sel_to_remove:
+                    if sym in st.session_state.watchlists[active_wl]:
+                        st.session_state.watchlists[active_wl].remove(sym)
+                st.rerun()
 
-            st.markdown("---")
-            st.subheader("📋 Copy Watchlist to TradingView Clipboard")
-            tv_export_string = ", ".join(current_symbols)
-            st.code(tv_export_string, language="text")
-
-        else:
-            col_wl_sidebar, col_wl_chart = st.columns([1.3, 3.7])
-            with col_wl_sidebar:
-                st.markdown("#### ⚡ Watchlist Sidebar")
-                st.caption("💡 **Click ticker text** or use **↑/↓ arrow keys** to switch chart:")
-                sidebar_df = merged_df[['TV_Symbol', 'Close', 'Change %', 'ADR %']].copy()
-                wl_event = st.dataframe(sidebar_df, use_container_width=True, hide_index=True, height=620, on_select="rerun", selection_mode="single-row", key="wl_sidebar_table")
-                selected_wl_row = parse_single_row_selection(wl_event, sidebar_df)
-                active_wl_symbol = selected_wl_row['TV_Symbol'] if selected_wl_row is not None else sidebar_df.iloc[0]['TV_Symbol']
-
-            with col_wl_chart:
-                ticker_only = active_wl_symbol.split(":")[-1]
-                cw_title, cw_link = st.columns([2.5, 1.5])
-                with cw_title:
-                    st.markdown(f"### 📈 {active_wl_symbol}")
-                with cw_link:
-                    deep_link_url = f"https://www.tradingview.com/chart/?symbol=NSE:{ticker_only}"
-                    st.markdown(f'<a href="{deep_link_url}" target="_blank" style="display:inline-block;padding:0.4rem 0.8rem;background-color:#2962FF;color:white;text-decoration:none;border-radius:4px;font-weight:bold;float:right;margin-top:4px;">↗️ TradingView</a>', unsafe_allow_html=True)
-
-                widget_symbol = f"BSE:{ticker_only}"
-                chart_widget_html = f"""
-                <div class="tradingview-widget-container" style="height:620px;width:100%;margin:0;padding:0;overflow:hidden;">
-                  <div id="tradingview_chart_container" style="height:620px;width:100%"></div>
-                  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-                  <script type="text/javascript">
-                  new TradingView.widget({{
-                    "autosize": true,
-                    "height": 620,
-                    "symbol": "{widget_symbol}",
-                    "interval": "D",
-                    "timezone": "Asia/Kolkata",
-                    "theme": "dark",
-                    "style": "1",
-                    "locale": "en",
-                    "toolbar_bg": "#f1f3f6",
-                    "enable_publishing": false,
-                    "withdateranges": true,
-                    "hide_side_toolbar": false,
-                    "allow_symbol_change": true,
-                    "details": true,
-                    "studies": ["STD;SMA", "STD;Volume"],
-                    "container_id": "tradingview_chart_container"
-                  }});
-                  </script>
-                </div>
-                """
-                components.html(chart_widget_html, height=620, scrolling=False)
+        st.markdown("---")
+        st.subheader("📋 Copy Watchlist to TradingView Clipboard")
+        tv_export_string = ", ".join(current_symbols)
+        st.code(tv_export_string, language="text")
