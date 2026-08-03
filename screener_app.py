@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed, **5 Custom MAs**, **Custom ADR Length**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed, **5 Custom MAs**, **Custom ADR%**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -201,7 +201,7 @@ def map_to_indian_classification(tv_industry, tv_sector):
 # ==========================================
 # 2. BACKEND SCREENER LOGIC
 # ==========================================
-def fetch_screener_data(exchanges, min_mcap, min_adr_val, adr_length, ma_columns_to_fetch, limit_rows):
+def fetch_screener_data(exchanges, min_mcap, adr_length, ma_columns_to_fetch, limit_rows):
     if not exchanges:
         return pd.DataFrame()
     
@@ -326,7 +326,7 @@ with st.sidebar.form("filter_form"):
     adr_length = st.number_input(
         "ADR Length (Days):", 
         min_value=1, max_value=100, value=20, step=1,
-        help="CAN SLIM / Minervini standard is 20 days."
+        help="Pine Script standard is 20 days."
     )
     min_adr = st.slider("Min ADR %:", min_value=0.0, max_value=10.0, value=2.25, step=0.25)
     min_above_52l = st.slider("Min % Above 52-Week Low:", min_value=0, max_value=100, value=20, step=5)
@@ -341,14 +341,12 @@ with st.sidebar.form("filter_form"):
 # ==========================================
 # 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
-# Collect unique Moving Average columns to fetch from API
 ma_cols_to_fetch = list(set([m["col_name"] for m in ma_filters]))
 
 with st.spinner("Scanning Indian Equities & Applying Custom Filters..."):
     results_df = fetch_screener_data(
         exchange_choice,
         min_mcap_cr,
-        min_adr,
         adr_length,
         ma_cols_to_fetch,
         max_results
@@ -396,16 +394,20 @@ else:
         if col_name in df.columns:
             df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
             
-    # --- 6. HANDLE ADR LENGTH SAFELY ---
+    # --- 6. CORRECT ADR% PERCENTAGE FORMULA ---
+    # TradingView API returns ADR in Rupee value (INR).
+    # Pine Script ADR% formula: (ADR_Rupee / Close_Price) * 100
     custom_adr_col = f"ADR.{adr_length}"
     if custom_adr_col in df.columns and not df[custom_adr_col].isna().all():
-        df['ADR_calc'] = df[custom_adr_col]
+        raw_adr_rupee = df[custom_adr_col]
     elif 'ADR' in df.columns:
-        df['ADR_calc'] = df['ADR']  # Fallback to standard ADR if custom length not in DB
+        raw_adr_rupee = df['ADR']
     else:
-        df['ADR_calc'] = 0.0
+        raw_adr_rupee = 0.0
         
-    df = df[df['ADR_calc'] >= min_adr]
+    # Calculate exact ADR% matching Pine Script
+    df['ADR_pct'] = (raw_adr_rupee / df['close']) * 100
+    df = df[df['ADR_pct'] >= min_adr]
             
     # --- 7. APPLY 5 CUSTOM MA FILTERS ---
     for ma in ma_filters:
@@ -434,7 +436,7 @@ else:
         df['60D Vol (₹ Cr)'] = (df['val_traded_60d_inr'] / 10_000_000).round(2)
         df['Close'] = df['close'].round(2)
         df['Change %'] = df['change'].round(2)
-        df[f'ADR ({adr_length}D) %'] = df['ADR_calc'].round(2)
+        df[f'ADR ({adr_length}D) %'] = df['ADR_pct'].round(2)
         df['TV_Symbol'] = df['exchange'] + ":" + df['name']
         
         # Round enabled MAs for clean table display
