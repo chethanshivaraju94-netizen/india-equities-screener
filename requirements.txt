@@ -1,3 +1,6 @@
-streamlit>=1.30.0
-tradingview-screener>=2.2.0
-pandas>=2.0.0
+streamlit
+pandas
+numpy
+requests
+tradingview-screener
+yfinance
