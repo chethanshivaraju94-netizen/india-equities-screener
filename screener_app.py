@@ -2,7 +2,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from tradingview_screener import Query, col
-import yfinance as yf
+
+# Safely import yfinance without crashing Streamlit if missing from requirements.txt
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
 
 # Set Streamlit Page Configuration
 st.set_page_config(
@@ -13,6 +19,9 @@ st.set_page_config(
 
 st.title("📈 India Equities Interactive Screener")
 st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed, **5 Custom MAs**, **True Pine Script ADR% Engine**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+
+if not YFINANCE_AVAILABLE:
+    st.info("💡 **Tip:** To enable exact bar-by-bar Pine Script ADR% calculations, add `yfinance` to your repository's `requirements.txt` file.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -191,6 +200,9 @@ def calculate_true_pine_adr(symbol, exchange, length):
     Computes exact bar-by-bar Pine Script ADR%:
     SMA((High - Low) / Low * 100, length)
     """
+    if not YFINANCE_AVAILABLE:
+        return np.nan
+        
     suffix = ".NS" if exchange == "NSE" else ".BO"
     ticker = f"{symbol}{suffix}"
     try:
@@ -198,11 +210,9 @@ def calculate_true_pine_adr(symbol, exchange, length):
         if data.empty or len(data) < length:
             return np.nan
         
-        # Ensure 1D Series
         high = data["High"].squeeze()
         low = data["Low"].squeeze()
         
-        # Standard Minervini / CAN SLIM Pine Script formula
         daily_range_pct = ((high - low) / low) * 100
         true_adr_pct = daily_range_pct.tail(length).mean()
         return round(float(true_adr_pct), 2)
@@ -309,7 +319,8 @@ with st.sidebar.form("filter_form"):
     
     use_exact_pine = st.checkbox(
         "⚡ Calculate Exact Pine Script ADR%", 
-        value=True,
+        value=YFINANCE_AVAILABLE,
+        disabled=not YFINANCE_AVAILABLE,
         help="Bypasses TV API's fixed 14-period limitation by computing exact SMA((H-L)/L, length)*100 bar-by-bar."
     )
     
@@ -360,17 +371,15 @@ else:
             df[c] = pd.to_numeric(df[c], errors='coerce')
             
     # --- TRUE ADR% ENGINE ---
-    if use_exact_pine:
+    if use_exact_pine and YFINANCE_AVAILABLE:
         with st.spinner(f"Computing exact bar-by-bar {adr_length}-day Pine Script ADR%..."):
             adr_values = []
             for idx, row in df.iterrows():
                 val = calculate_true_pine_adr(row['name'], row['exchange'], adr_length)
                 adr_values.append(val)
             df['ADR_pct'] = adr_values
-            # Fallback to API approx if fetch fails
             df['ADR_pct'] = df['ADR_pct'].fillna((df['ADR'] / df['close']) * 100)
     else:
-        # Fast API approx (ADR 14-day / Close)
         df['ADR_pct'] = (df['ADR'] / df['close']) * 100
         
     df = df[df['ADR_pct'] >= min_adr]
