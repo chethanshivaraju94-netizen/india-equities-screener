@@ -10,8 +10,16 @@ st.set_page_config(
     layout="wide"
 )
 
+# Initialize Session State for Interactive Drilldown & Widget Reset
+if "drilldown_type" not in st.session_state:
+    st.session_state.drilldown_type = None
+if "drilldown_val" not in st.session_state:
+    st.session_state.drilldown_val = None
+if "reset_counter" not in st.session_state:
+    st.session_state.reset_counter = 0
+
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Scan Summary Donut Charts & Rotation Stats**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Interactive Click-to-Filter Rotation Donut Charts**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -182,6 +190,25 @@ def map_to_indian_classification(tv_industry, tv_sector):
         return mapped
     return "Diversified", "Diversified Commercial Services"
 
+# Safe parser for Streamlit Plotly / Table selection events
+def parse_chart_selection(event):
+    if event and isinstance(event, dict):
+        sel = event.get("selection", {})
+        points = sel.get("points", [])
+        if points and len(points) > 0:
+            return points[0].get("label")
+    return None
+
+def parse_table_selection(event, df_source, col_name):
+    if event and isinstance(event, dict):
+        sel = event.get("selection", {})
+        rows = sel.get("rows", [])
+        if rows and len(rows) > 0:
+            idx = rows[0]
+            if idx < len(df_source):
+                return df_source.iloc[idx][col_name]
+    return None
+
 # ==========================================
 # 2. BACKEND SCREENER LOGIC
 # ==========================================
@@ -297,6 +324,11 @@ with st.sidebar.form("filter_form"):
     
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
+# Reset drilldown when new filters are applied from sidebar
+if apply_filters:
+    st.session_state.drilldown_type = None
+    st.session_state.drilldown_val = None
+
 # ==========================================
 # 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
@@ -315,7 +347,7 @@ else:
         df = df[df['type'] == 'stock']
     df = df.drop_duplicates(subset=['name'], keep='first')
     
-    # Map Indian Sectors (84-pair lookup table) for the ENTIRE universe first
+    # Map Indian Sectors (84-pair lookup table) for ENTIRE universe
     mapped_sectors, mapped_industries = [], []
     for _, row in df.iterrows():
         sec, ind = map_to_indian_classification(row.get("industry", ""), row.get("sector", ""))
@@ -324,7 +356,7 @@ else:
     df["Sector"] = mapped_sectors
     df["Industry"] = mapped_industries
     
-    # Track Total Universe Counts per Sector and Industry (before any technical filtering)
+    # Track Total Universe Counts per Sector and Industry (before technical filtering)
     total_sector_counts = df['Sector'].value_counts()
     total_industry_counts = df['Industry'].value_counts()
         
@@ -365,6 +397,7 @@ else:
         st.warning("No stocks passed all criteria. Try broadening your NSE Sector/Industry selections.")
     else:
         total_passed = len(df)
+        rc = st.session_state.reset_counter
         
         # ==========================================
         # 5. SCAN SUMMARY & ROTATION DASHBOARD
@@ -376,13 +409,9 @@ else:
         with tab_sector:
             sec_counts = df['Sector'].value_counts().reset_index()
             sec_counts.columns = ['Sector', 'Number of Stocks Passed']
-            
-            # 1. Share of Passed Stocks (Donut chart slice percentage - sums to 100%)
             sec_counts['% Share of Passed Stocks'] = (
                 (sec_counts['Number of Stocks Passed'] / total_passed) * 100
             ).round(1)
-            
-            # 2. Sector Breadth Percentage (Passed in Sector ÷ Total Universe in Sector)
             sec_counts['% of Stocks Passed Amongst Total Stocks in the Sector'] = sec_counts.apply(
                 lambda r: round((r['Number of Stocks Passed'] / total_sector_counts.get(r['Sector'], 1)) * 100, 1),
                 axis=1
@@ -403,23 +432,43 @@ else:
                     margin=dict(t=20, b=10, l=20, r=20),
                     height=360
                 )
-                st.plotly_chart(fig_sec, use_container_width=True)
+                chart_ev_sec = st.plotly_chart(
+                    fig_sec, 
+                    use_container_width=True, 
+                    on_select="rerun", 
+                    selection_mode="points", 
+                    key=f"sec_chart_{rc}"
+                )
                 st.caption("Note: All Percentages are Based on the Total Number of Passed Stocks")
                 
             with c_table1:
-                st.dataframe(sec_counts, use_container_width=True, hide_index=True, height=360)
+                table_ev_sec = st.dataframe(
+                    sec_counts, 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    height=360,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key=f"sec_table_{rc}"
+                )
+            
+            # Detect Sector Click (Chart or Table)
+            sel_sec_chart = parse_chart_selection(chart_ev_sec)
+            sel_sec_table = parse_table_selection(table_ev_sec, sec_counts, "Sector")
+            if sel_sec_chart:
+                st.session_state.drilldown_type = "Sector"
+                st.session_state.drilldown_val = sel_sec_chart
+            elif sel_sec_table:
+                st.session_state.drilldown_type = "Sector"
+                st.session_state.drilldown_val = sel_sec_table
 
         # --- TAB 2: INDUSTRY SUMMARY ---
         with tab_industry:
             ind_counts = df['Industry'].value_counts().reset_index()
             ind_counts.columns = ['Basic Industry', 'Number of Stocks Passed']
-            
-            # 1. Share of Passed Stocks (Donut chart slice percentage - sums to 100%)
             ind_counts['% Share of Passed Stocks'] = (
                 (ind_counts['Number of Stocks Passed'] / total_passed) * 100
             ).round(1)
-            
-            # 2. Industry Breadth Percentage (Passed in Industry ÷ Total Universe in Industry)
             ind_counts['% of Stocks Passed Amongst Total Stocks in the Industry'] = ind_counts.apply(
                 lambda r: round((r['Number of Stocks Passed'] / total_industry_counts.get(r['Basic Industry'], 1)) * 100, 1),
                 axis=1
@@ -440,30 +489,75 @@ else:
                     margin=dict(t=20, b=10, l=20, r=20),
                     height=360
                 )
-                st.plotly_chart(fig_ind, use_container_width=True)
+                chart_ev_ind = st.plotly_chart(
+                    fig_ind, 
+                    use_container_width=True, 
+                    on_select="rerun", 
+                    selection_mode="points", 
+                    key=f"ind_chart_{rc}"
+                )
                 st.caption("Note: All Percentages are Based on the Total Number of Passed Stocks")
                 
             with c_table2:
-                st.dataframe(ind_counts, use_container_width=True, hide_index=True, height=360)
+                table_ev_ind = st.dataframe(
+                    ind_counts, 
+                    use_container_width=True, 
+                    hide_index=True, 
+                    height=360,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key=f"ind_table_{rc}"
+                )
+                
+            # Detect Industry Click (Chart or Table)
+            sel_ind_chart = parse_chart_selection(chart_ev_ind)
+            sel_ind_table = parse_table_selection(table_ev_ind, ind_counts, "Basic Industry")
+            if sel_ind_chart:
+                st.session_state.drilldown_type = "Industry"
+                st.session_state.drilldown_val = sel_ind_chart
+            elif sel_ind_table:
+                st.session_state.drilldown_type = "Industry"
+                st.session_state.drilldown_val = sel_ind_table
 
         # ==========================================
-        # 6. DETAILED FILTERED TABLE
+        # 6. ACTIVE DRILLDOWN BANNER & FILTERING
         # ==========================================
         st.markdown("---")
-        df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
+        df_display = df.copy()
+        
+        if st.session_state.drilldown_val:
+            col_info, col_reset = st.columns([3, 1])
+            with col_info:
+                st.info(f"🔍 **Active Drilldown:** Showing only stocks in **{st.session_state.drilldown_type} — {st.session_state.drilldown_val}**")
+            with col_reset:
+                if st.button("🔄 Reset Scan Results (Show All)", type="primary", use_container_width=True):
+                    st.session_state.drilldown_type = None
+                    st.session_state.drilldown_val = None
+                    st.session_state.reset_counter += 1
+                    st.rerun()
+            
+            # Apply dynamic click filter to DataFrame
+            df_display = df_display[df_display[st.session_state.drilldown_type] == st.session_state.drilldown_val]
+        else:
+            st.caption("💡 **Tip:** Click any slice on the Donut Chart or any row in the Summary Tables above to drill down into a specific Sector or Industry.")
+
+        # ==========================================
+        # 7. DETAILED FILTERED TABLE & WATCHLIST
+        # ==========================================
+        df_display['Market Cap (₹ Cr)'] = (df_display['market_cap_basic'] / 10_000_000).round(2)
         
         vol_display_label = f"{vol_period_days}D Close×AvgVol (₹ Cr)"
-        df[vol_display_label] = (df['val_traded_inr'] / 10_000_000).round(2)
+        df_display[vol_display_label] = (df_display['val_traded_inr'] / 10_000_000).round(2)
         
-        df['Close'] = df['close'].round(2)
-        df['Change %'] = df['change'].round(2)
-        df['ADR %'] = df['ADR_pct'].round(2)
-        df['TV_Symbol'] = df['exchange'] + ":" + df['name']
+        df_display['Close'] = df_display['close'].round(2)
+        df_display['Change %'] = df_display['change'].round(2)
+        df_display['ADR %'] = df_display['ADR_pct'].round(2)
+        df_display['TV_Symbol'] = df_display['exchange'] + ":" + df_display['name']
         
         active_ma_labels = []
         for ma in ma_filters:
-            if ma["enabled"] and ma["col_name"] in df.columns:
-                df[ma["label"]] = df[ma["col_name"]].round(2)
+            if ma["enabled"] and ma["col_name"] in df_display.columns:
+                df_display[ma["label"]] = df_display[ma["col_name"]].round(2)
                 active_ma_labels.append(ma["label"])
         
         table_columns = [
@@ -474,10 +568,14 @@ else:
             'Sector', 'Industry'
         ]
         
-        st.subheader(f"📋 Filtered Stock Results ({total_passed} Stocks Found)")
-        st.dataframe(df[table_columns], use_container_width=True, hide_index=True)
+        if st.session_state.drilldown_val:
+            st.subheader(f"📋 Filtered Stock Results — {st.session_state.drilldown_val} ({len(df_display)} Stocks)")
+        else:
+            st.subheader(f"📋 Filtered Stock Results ({len(df_display)} Stocks Found)")
+            
+        st.dataframe(df_display[table_columns], use_container_width=True, hide_index=True)
         
         st.markdown("---")
         st.subheader("📋 Copy to TradingView Watchlist")
-        tv_watchlist_string = ", ".join(df['TV_Symbol'].tolist())
+        tv_watchlist_string = ", ".join(df_display['TV_Symbol'].tolist())
         st.code(tv_watchlist_string, language="text")
