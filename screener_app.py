@@ -20,7 +20,7 @@ if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Hierarchical Multi-Select Sector → Industry Drilldown**, **Interactive Chart Mode Terminal**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Hierarchical Multi-Select Sector → Industry Drilldown**, **Responsive Chart Mode Terminal**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -617,7 +617,7 @@ else:
             tv_watchlist_string = ", ".join(df_display['TV_Symbol'].tolist())
             st.code(tv_watchlist_string, language="text")
 
-        # --- MODE B: INTERACTIVE CHART MODE (WATCHLIST SIDEBAR + TV EMBED) ---
+        # --- MODE B: INTERACTIVE CHART MODE (RESPONSIVE WATCHLIST & TV WIDGET) ---
         else:
             if df_display.empty:
                 st.warning("No stocks available in chart mode for current selection.")
@@ -626,16 +626,16 @@ else:
                 
                 with col_watchlist:
                     st.markdown("#### ⚡ Watchlist Sidebar")
-                    st.caption("Click any ticker to load its interactive chart:")
+                    st.caption("Click any ticker to load chart:")
                     
                     watchlist_df = df_display[['TV_Symbol', 'Close', 'Change %', 'ADR %']].copy()
                     
-                    # Watchlist interactive selector
+                    # Watchlist interactive selector matched to chart height (620px)
                     watchlist_event = st.dataframe(
                         watchlist_df,
                         use_container_width=True,
                         hide_index=True,
-                        height=580,
+                        height=620,
                         on_select="rerun",
                         selection_mode="single-row",
                         key=f"wl_table_{rc}"
@@ -648,32 +648,42 @@ else:
                         active_symbol = watchlist_df.iloc[0]['TV_Symbol']
 
                 with col_chart:
-                    # 1. Widget Ticker: Automatically route via BSE: to bypass free-tier iframe restrictions
                     ticker_only = active_symbol.split(":")[-1]
-                    widget_symbol = f"BSE:{ticker_only}"
 
-                    # 2. Deep-link Ticker: Point directly to official NSE: symbol for your Pine Scripts
-                    deep_link_url = f"https://www.tradingview.com/chart/?symbol=NSE:{ticker_only}"
-
-                    c_title, c_link = st.columns([2.5, 1.5])
+                    # Controls Bar: Exchange Switcher + Deep Link Button
+                    c_title, c_ex_switch, c_link = st.columns([2.0, 1.2, 1.3])
                     with c_title:
-                        st.markdown(f"### 📈 {active_symbol} — Advanced Candle Chart")
+                        st.markdown(f"### 📈 {active_symbol}")
+                    with c_ex_switch:
+                        widget_prefix = st.selectbox(
+                            "Widget Exchange:",
+                            options=["BSE", "NSE"],
+                            index=0,
+                            help="BSE is recommended to bypass TradingView iframe embed blocks. Use NSE for direct links."
+                        )
                     with c_link:
+                        deep_link_url = f"https://www.tradingview.com/chart/?symbol=NSE:{ticker_only}"
                         st.markdown(
-                            f'<a href="{deep_link_url}" target="_blank" style="display:inline-block;padding:0.4rem 0.8rem;background-color:#2962FF;color:white;text-decoration:none;border-radius:4px;font-weight:bold;float:right;">↗️ Open in TradingView App</a>',
+                            f'<a href="{deep_link_url}" target="_blank" style="display:inline-block;padding:0.4rem 0.8rem;background-color:#2962FF;color:white;text-decoration:none;border-radius:4px;font-weight:bold;float:right;margin-top:4px;">↗️ Open in TradingView App</a>',
                             unsafe_allow_html=True
                         )
+
+                    widget_symbol = f"{widget_prefix}:{ticker_only}"
                     
-                    # Official TradingView Advanced Chart Widget HTML/JS embed
+                    # Dynamically inject active Screener MAs into chart widget studies
+                    active_studies = ["STD;SMA"]
+                    if any(m["enabled"] and m["col_name"]=="EMA21" for m in ma_filters):
+                        active_studies.append("STD;EMA")
+
                     chart_widget_html = f"""
-                    <div class="tradingview-widget-container" style="height:580px;width:100%">
-                      <div id="tradingview_chart_container" style="height:100%;width:100%"></div>
+                    <div class="tradingview-widget-container" style="height:620px;width:100%;margin:0;padding:0;overflow:hidden;">
+                      <div id="tradingview_chart_container" style="height:620px;width:100%"></div>
                       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
                       <script type="text/javascript">
                       new TradingView.widget(
                       {{
-                        "width": "100%",
-                        "height": 560,
+                        "autosize": true,
+                        "height": 620,
                         "symbol": "{widget_symbol}",
                         "interval": "D",
                         "timezone": "Asia/Kolkata",
@@ -687,7 +697,8 @@ else:
                         "allow_symbol_change": true,
                         "details": true,
                         "studies": [
-                          "STD;SMA"
+                          "STD;SMA",
+                          "STD;Volume"
                         ],
                         "container_id": "tradingview_chart_container"
                       }}
@@ -695,4 +706,4 @@ else:
                       </script>
                     </div>
                     """
-                    components.html(chart_widget_html, height=580, scrolling=False)
+                    components.html(chart_widget_html, height=620, scrolling=False)
