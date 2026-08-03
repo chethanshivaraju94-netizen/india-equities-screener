@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from tradingview_screener import Query, col
+import yfinance as yf
 
 # Set Streamlit Page Configuration
 st.set_page_config(
@@ -10,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed, **5 Custom MAs**, **Custom ADR%**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed, **5 Custom MAs**, **True Pine Script ADR% Engine**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -87,35 +89,29 @@ INDIAN_SECTOR_HIERARCHY = {
     ]
 }
 
-# 100% Deterministic Lookup Table for all 84 TradingView India Sector/Industry pairs
 TV_TO_INDIAN_MAP = {
     ('Commercial Services', 'Financial Publishing/Services'): ('Financial Services', 'Capital Markets'),
     ('Commercial Services', 'Miscellaneous Commercial Services'): ('Services', 'Commercial & Professional Services'),
     ('Commercial Services', 'Personnel Services'): ('Services', 'Commercial & Professional Services'),
-    
     ('Consumer Durables', 'Automotive Aftermarket'): ('Automobile and Auto Components', 'Auto Components & Ancillaries'),
     ('Consumer Durables', 'Electronics/Appliances'): ('Consumer Durables', 'Consumer Electronics & Appliances'),
     ('Consumer Durables', 'Home Furnishings'): ('Consumer Durables', 'Household & Personal Products'),
     ('Consumer Durables', 'Homebuilding'): ('Realty', 'Real Estate Developers'),
     ('Consumer Durables', 'Motor Vehicles'): ('Automobile and Auto Components', 'Automobiles'),
     ('Consumer Durables', 'Other Consumer Specialties'): ('Consumer Durables', 'Gems, Jewellery & Watches'),
-    
     ('Consumer Non-Durables', 'Apparel/Footwear'): ('Textiles', 'Garments & Apparels'),
     ('Consumer Non-Durables', 'Beverages: Alcoholic'): ('Fast Moving Consumer Goods', 'Beverages'),
     ('Consumer Non-Durables', 'Food: Major Diversified'): ('Fast Moving Consumer Goods', 'Food Products'),
     ('Consumer Non-Durables', 'Food: Specialty/Candy'): ('Fast Moving Consumer Goods', 'Food Products'),
     ('Consumer Non-Durables', 'Household/Personal Care'): ('Fast Moving Consumer Goods', 'Personal Care'),
-    
     ('Consumer Services', 'Broadcasting'): ('Media, Entertainment & Publication', 'Broadcasting & Cable TV'),
     ('Consumer Services', 'Hotels/Resorts/Cruise lines'): ('Consumer Services', 'Travel & Tourism'),
     ('Consumer Services', 'Movies/Entertainment'): ('Media, Entertainment & Publication', 'Entertainment & Content'),
     ('Consumer Services', 'Publishing: Books/Magazines'): ('Media, Entertainment & Publication', 'Print Media & Publishing'),
     ('Consumer Services', 'Restaurants'): ('Consumer Services', 'Restaurants & QSR'),
-    
     ('Distribution Services', 'Electronics Distributors'): ('Capital Goods', 'Industrial Products'),
     ('Distribution Services', 'Medical Distributors'): ('Healthcare', 'Medical Equipment & Supplies'),
     ('Distribution Services', 'Wholesale Distributors'): ('Services', 'Commercial & Professional Services'),
-    
     ('Electronic Technology', 'Aerospace & Defense'): ('Capital Goods', 'Aerospace & Defense'),
     ('Electronic Technology', 'Computer Communications'): ('Telecommunication', 'Telecom - Equipment & Accessories'),
     ('Electronic Technology', 'Computer Peripherals'): ('Information Technology', 'IT - Hardware'),
@@ -123,10 +119,8 @@ TV_TO_INDIAN_MAP = {
     ('Electronic Technology', 'Electronic Equipment/Instruments'): ('Capital Goods', 'Electrical Equipment'),
     ('Electronic Technology', 'Electronic Production Equipment'): ('Capital Goods', 'Industrial Manufacturing'),
     ('Electronic Technology', 'Telecommunications Equipment'): ('Telecommunication', 'Telecom - Equipment & Accessories'),
-    
     ('Energy Minerals', 'Oil & Gas Production'): ('Oil, Gas & Consumable Fuels', 'Oil & Gas Exploration & Production'),
     ('Energy Minerals', 'Oil Refining/Marketing'): ('Oil, Gas & Consumable Fuels', 'Petroleum Products & Refining'),
-    
     ('Finance', 'Finance/Rental/Leasing'): ('Financial Services', 'Finance & NBFCs'),
     ('Finance', 'Financial Conglomerates'): ('Financial Services', 'Finance & NBFCs'),
     ('Finance', 'Investment Banks/Brokers'): ('Financial Services', 'Capital Markets'),
@@ -136,25 +130,20 @@ TV_TO_INDIAN_MAP = {
     ('Finance', 'Multi-Line Insurance'): ('Financial Services', 'Insurance'),
     ('Finance', 'Real Estate Development'): ('Realty', 'Real Estate Developers'),
     ('Finance', 'Regional Banks'): ('Financial Services', 'Banks'),
-    
     ('Health Services', 'Hospital/Nursing Management'): ('Healthcare', 'Healthcare Services'),
     ('Health Services', 'Medical/Nursing Services'): ('Healthcare', 'Healthcare Services'),
-    
     ('Health Technology', 'Biotechnology'): ('Healthcare', 'Pharmaceuticals & Biotechnology'),
     ('Health Technology', 'Medical Specialties'): ('Healthcare', 'Medical Equipment & Supplies'),
     ('Health Technology', 'Pharmaceuticals: Generic'): ('Healthcare', 'Pharmaceuticals & Biotechnology'),
     ('Health Technology', 'Pharmaceuticals: Major'): ('Healthcare', 'Pharmaceuticals & Biotechnology'),
     ('Health Technology', 'Pharmaceuticals: Other'): ('Healthcare', 'Pharmaceuticals & Biotechnology'),
-    
     ('Industrial Services', 'Contract Drilling'): ('Oil, Gas & Consumable Fuels', 'Oil & Gas Exploration & Production'),
     ('Industrial Services', 'Engineering & Construction'): ('Construction', 'Civil Construction'),
     ('Industrial Services', 'Oilfield Services/Equipment'): ('Oil, Gas & Consumable Fuels', 'Oil & Gas Exploration & Production'),
-    
     ('Non-Energy Minerals', 'Construction Materials'): ('Construction Materials', 'Ceramics & Building Materials'),
     ('Non-Energy Minerals', 'Forest Products'): ('Forest Materials', 'Paper, Forest & Jute Products'),
     ('Non-Energy Minerals', 'Other Metals/Minerals'): ('Metals & Mining', 'Minerals & Mining'),
     ('Non-Energy Minerals', 'Steel'): ('Metals & Mining', 'Ferrous Metals (Steel & Iron)'),
-    
     ('Process Industries', 'Agricultural Commodities/Milling'): ('Fast Moving Consumer Goods', 'Agricultural Food & Other Products'),
     ('Process Industries', 'Chemicals: Agricultural'): ('Chemicals', 'Fertilizers & Agrochemicals'),
     ('Process Industries', 'Chemicals: Major Diversified'): ('Chemicals', 'Chemicals & Petrochemicals'),
@@ -163,7 +152,6 @@ TV_TO_INDIAN_MAP = {
     ('Process Industries', 'Industrial Specialties'): ('Capital Goods', 'Industrial Manufacturing'),
     ('Process Industries', 'Pulp & Paper'): ('Forest Materials', 'Paper, Forest & Jute Products'),
     ('Process Industries', 'Textiles'): ('Textiles', 'Textiles & Weaving'),
-    
     ('Producer Manufacturing', 'Auto Parts: OEM'): ('Automobile and Auto Components', 'Auto Components & Ancillaries'),
     ('Producer Manufacturing', 'Building Products'): ('Construction Materials', 'Cement & Cement Products'),
     ('Producer Manufacturing', 'Electrical Products'): ('Capital Goods', 'Electrical Equipment'),
@@ -172,22 +160,18 @@ TV_TO_INDIAN_MAP = {
     ('Producer Manufacturing', 'Miscellaneous Manufacturing'): ('Capital Goods', 'Industrial Products'),
     ('Producer Manufacturing', 'Office Equipment/Supplies'): ('Consumer Durables', 'Household & Personal Products'),
     ('Producer Manufacturing', 'Trucks/Construction/Farm Machinery'): ('Automobile and Auto Components', 'Automobiles'),
-    
     ('Retail Trade', 'Apparel/Footwear Retail'): ('Consumer Services', 'Retailing'),
     ('Retail Trade', 'Electronics/Appliance Stores'): ('Consumer Services', 'Retailing'),
     ('Retail Trade', 'Internet Retail'): ('Consumer Services', 'Retailing'),
     ('Retail Trade', 'Specialty Stores'): ('Consumer Services', 'Retailing'),
-    
     ('Technology Services', 'Information Technology Services'): ('Information Technology', 'IT - Services'),
     ('Technology Services', 'Internet Software/Services'): ('Information Technology', 'IT - Software & Consulting'),
     ('Technology Services', 'Packaged Software'): ('Information Technology', 'IT - Software & Consulting'),
-    
     ('Transportation', 'Air Freight/Couriers'): ('Services', 'Logistics & Transportation Services'),
     ('Transportation', 'Airlines'): ('Consumer Services', 'Travel & Tourism'),
     ('Transportation', 'Marine Shipping'): ('Services', 'Port & Shipping Services'),
     ('Transportation', 'Other Transportation'): ('Services', 'Logistics & Transportation Services'),
     ('Transportation', 'Railroads'): ('Services', 'Logistics & Transportation Services'),
-    
     ('Utilities', 'Electric Utilities'): ('Power', 'Power Generation'),
     ('Utilities', 'Gas Distributors'): ('Utilities', 'Gas Transmission & Utilities')
 }
@@ -199,27 +183,47 @@ def map_to_indian_classification(tv_industry, tv_sector):
     return "Diversified", "Diversified Commercial Services"
 
 # ==========================================
-# 2. BACKEND SCREENER LOGIC
+# 2. EXACT PINE SCRIPT ADR% ENGINE
 # ==========================================
-def fetch_screener_data(exchanges, min_mcap, adr_length, ma_columns_to_fetch, limit_rows):
+@st.cache_data(ttl=3600)
+def calculate_true_pine_adr(symbol, exchange, length):
+    """
+    Computes exact bar-by-bar Pine Script ADR%:
+    SMA((High - Low) / Low * 100, length)
+    """
+    suffix = ".NS" if exchange == "NSE" else ".BO"
+    ticker = f"{symbol}{suffix}"
+    try:
+        data = yf.download(ticker, period="3mo", interval="1d", progress=False)
+        if data.empty or len(data) < length:
+            return np.nan
+        
+        # Ensure 1D Series
+        high = data["High"].squeeze()
+        low = data["Low"].squeeze()
+        
+        # Standard Minervini / CAN SLIM Pine Script formula
+        daily_range_pct = ((high - low) / low) * 100
+        true_adr_pct = daily_range_pct.tail(length).mean()
+        return round(float(true_adr_pct), 2)
+    except Exception:
+        return np.nan
+
+# ==========================================
+# 3. BACKEND SCREENER LOGIC
+# ==========================================
+def fetch_screener_data(exchanges, min_mcap, ma_columns_to_fetch, limit_rows):
     if not exchanges:
         return pd.DataFrame()
     
     min_mcap_inr = min_mcap * 10_000_000
     
-    # Base columns
     select_cols = [
         'name', 'close', 'change', 'volume', 'market_cap_basic',
         'average_volume_60d_calc', 'ADR', 'price_52_week_high',
         'price_52_week_low', 'exchange', 'type', 'industry', 'sector'
     ]
     
-    # Request custom ADR length column if supported by TV
-    adr_custom_col = f"ADR.{adr_length}"
-    if adr_custom_col not in select_cols:
-        select_cols.append(adr_custom_col)
-        
-    # Add unique user-selected MA columns (e.g. EMA20, SMA50)
     for c in ma_columns_to_fetch:
         if c not in select_cols:
             select_cols.append(c)
@@ -227,9 +231,7 @@ def fetch_screener_data(exchanges, min_mcap, adr_length, ma_columns_to_fetch, li
     q = (Query()
          .set_markets('india')
          .select(*select_cols)
-         .where(
-             col('market_cap_basic') >= min_mcap_inr
-         )
+         .where(col('market_cap_basic') >= min_mcap_inr)
          .order_by('volume', ascending=False)
          .limit(limit_rows)
     )
@@ -242,7 +244,7 @@ def fetch_screener_data(exchanges, min_mcap, adr_length, ma_columns_to_fetch, li
         return pd.DataFrame()
 
 # ==========================================
-# 3. SIDEBAR CONTROLS
+# 4. SIDEBAR CONTROLS
 # ==========================================
 with st.sidebar.form("filter_form"):
     st.header("1. Exchange & Universe")
@@ -256,11 +258,7 @@ with st.sidebar.form("filter_form"):
     st.header("🏛️ Official NSE Filters (22 / 59)")
     
     sector_options = list(INDIAN_SECTOR_HIERARCHY.keys())
-    sector_choice = st.multiselect(
-        "NSE Sector (22 Economic Sectors):",
-        options=sector_options,
-        default=[]
-    )
+    sector_choice = st.multiselect("NSE Sector (22 Economic Sectors):", options=sector_options, default=[])
     
     if sector_choice:
         industry_options = []
@@ -271,34 +269,22 @@ with st.sidebar.form("filter_form"):
         all_industries = [ind for inds in INDIAN_SECTOR_HIERARCHY.values() for ind in inds]
         industry_options = sorted(list(set(all_industries)))
         
-    industry_choice = st.multiselect(
-        "NSE Industry (59 Distinct Classifications):",
-        options=industry_options,
-        default=[]
-    )
+    industry_choice = st.multiselect("NSE Industry (59 Distinct Classifications):", options=industry_options, default=[])
 
     st.markdown("---")
     st.header("2. Fundamental & Liquidity")
-    min_mcap_cr = st.number_input(
-        "Min Market Cap (₹ Crores) [1000 Cr = 10B INR]:", 
-        min_value=0, value=1000, step=100
-    )
-    min_vol60d_cr = st.number_input(
-        "Min 60D Avg Rupee Volume (₹ Cr) [5 Cr = 50M INR]:", 
-        min_value=0.0, value=5.0, step=0.5
-    )
+    min_mcap_cr = st.number_input("Min Market Cap (₹ Crores):", min_value=0, value=1000, step=100)
+    min_vol60d_cr = st.number_input("Min 60D Avg Rupee Volume (₹ Cr):", min_value=0.0, value=5.0, step=0.5)
 
     # --- 5 CUSTOMIZABLE MOVING AVERAGE SLOTS ---
     st.markdown("---")
     st.header("3. Trend & Moving Averages (5 MAs)")
-    st.caption("Select EMA/SMA and type any length. Check to enforce **Price > MA**.")
-    
     default_ma_configs = [
-        {"en": True,  "type": "EMA", "len": 21},  # MA 1
-        {"en": True,  "type": "SMA", "len": 50},  # MA 2
-        {"en": True,  "type": "SMA", "len": 200}, # MA 3
-        {"en": False, "type": "EMA", "len": 10},  # MA 4
-        {"en": False, "type": "SMA", "len": 150}  # MA 5
+        {"en": True,  "type": "EMA", "len": 21},
+        {"en": True,  "type": "SMA", "len": 50},
+        {"en": True,  "type": "SMA", "len": 200},
+        {"en": False, "type": "EMA", "len": 10},
+        {"en": False, "type": "SMA", "len": 150}
     ]
     
     ma_filters = []
@@ -313,24 +299,23 @@ with st.sidebar.form("filter_form"):
             
         col_name = f"{m_type}{m_len}"
         ma_filters.append({
-            "enabled": en,
-            "type": m_type,
-            "length": m_len,
-            "col_name": col_name,
-            "label": f"{m_type} {m_len}"
+            "enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"
         })
 
-    # --- CUSTOM ADR LENGTH & VOLATILITY ---
+    # --- CUSTOM ADR LENGTH & PINE SCRIPT TOGGLE ---
     st.markdown("---")
     st.header("4. Volatility & 52-Week Range")
-    adr_length = st.number_input(
-        "ADR Length (Days):", 
-        min_value=1, max_value=100, value=20, step=1,
-        help="Pine Script standard is 20 days."
+    adr_length = st.number_input("ADR Length (Days):", min_value=1, max_value=100, value=20, step=1)
+    
+    use_exact_pine = st.checkbox(
+        "⚡ Calculate Exact Pine Script ADR%", 
+        value=True,
+        help="Bypasses TV API's fixed 14-period limitation by computing exact SMA((H-L)/L, length)*100 bar-by-bar."
     )
+    
     min_adr = st.slider("Min ADR %:", min_value=0.0, max_value=10.0, value=2.25, step=0.25)
     min_above_52l = st.slider("Min % Above 52-Week Low:", min_value=0, max_value=100, value=20, step=5)
-    max_below_52h = st.slider("Max % Below 52-Week High (0% to X%):", min_value=0, max_value=50, value=30, step=5)
+    max_below_52h = st.slider("Max % Below 52-Week High:", min_value=0, max_value=50, value=30, step=5)
 
     st.markdown("---")
     st.header("5. Display Settings")
@@ -339,83 +324,63 @@ with st.sidebar.form("filter_form"):
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
 # ==========================================
-# 4. FETCH, ENRICH & FILTER DATA
+# 5. FETCH, ENRICH & FILTER DATA
 # ==========================================
 ma_cols_to_fetch = list(set([m["col_name"] for m in ma_filters]))
 
 with st.spinner("Scanning Indian Equities & Applying Custom Filters..."):
-    results_df = fetch_screener_data(
-        exchange_choice,
-        min_mcap_cr,
-        adr_length,
-        ma_cols_to_fetch,
-        max_results
-    )
+    results_df = fetch_screener_data(exchange_choice, min_mcap_cr, ma_cols_to_fetch, max_results)
 
 if results_df.empty:
     st.warning("No stocks matched your criteria. Click 'Apply Filters' after adjusting your parameters.")
 else:
     df = results_df.copy()
-    
-    # 1. Filter Exchanges exactly
     df = df[df['exchange'].isin(exchange_choice)]
-    
-    # 2. Filter for COMMON STOCKS ONLY
     if 'type' in df.columns:
         df = df[df['type'] == 'stock']
-    
-    # 3. SMART DEDUPLICATION (Keep NSE listing for dual-listed stocks)
     df = df.drop_duplicates(subset=['name'], keep='first')
     
-    # --- 4. DETERMINISTIC 84-PAIR INDIAN SECTOR & INDUSTRY MAPPING ---
-    mapped_sectors = []
-    mapped_industries = []
+    # Map Indian Sectors
+    mapped_sectors, mapped_industries = [], []
     for _, row in df.iterrows():
         sec, ind = map_to_indian_classification(row.get("industry", ""), row.get("sector", ""))
         mapped_sectors.append(sec)
         mapped_industries.append(ind)
-        
     df["Sector"] = mapped_sectors
     df["Industry"] = mapped_industries
         
-    # --- 5. APPLY NSE SECTOR & INDUSTRY FILTERS ---
     if sector_choice:
         df = df[df["Sector"].isin(sector_choice)]
     if industry_choice:
         df = df[df["Industry"].isin(industry_choice)]
     
-    # --- SAFE NUMERIC CONVERSION ---
-    numeric_cols = [
-        'market_cap_basic', 'close', 'change', 'volume', 
-        'average_volume_60d_calc', 'ADR', 'price_52_week_high', 'price_52_week_low'
-    ] + ma_cols_to_fetch + [f"ADR.{adr_length}"]
-    
-    for col_name in numeric_cols:
-        if col_name in df.columns:
-            df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+    numeric_cols = ['market_cap_basic', 'close', 'change', 'volume', 'average_volume_60d_calc', 'ADR', 'price_52_week_high', 'price_52_week_low'] + ma_cols_to_fetch
+    for c in numeric_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
             
-    # --- 6. CORRECT ADR% PERCENTAGE FORMULA ---
-    # TradingView API returns ADR in Rupee value (INR).
-    # Pine Script ADR% formula: (ADR_Rupee / Close_Price) * 100
-    custom_adr_col = f"ADR.{adr_length}"
-    if custom_adr_col in df.columns and not df[custom_adr_col].isna().all():
-        raw_adr_rupee = df[custom_adr_col]
-    elif 'ADR' in df.columns:
-        raw_adr_rupee = df['ADR']
+    # --- TRUE ADR% ENGINE ---
+    if use_exact_pine:
+        with st.spinner(f"Computing exact bar-by-bar {adr_length}-day Pine Script ADR%..."):
+            adr_values = []
+            for idx, row in df.iterrows():
+                val = calculate_true_pine_adr(row['name'], row['exchange'], adr_length)
+                adr_values.append(val)
+            df['ADR_pct'] = adr_values
+            # Fallback to API approx if fetch fails
+            df['ADR_pct'] = df['ADR_pct'].fillna((df['ADR'] / df['close']) * 100)
     else:
-        raw_adr_rupee = 0.0
+        # Fast API approx (ADR 14-day / Close)
+        df['ADR_pct'] = (df['ADR'] / df['close']) * 100
         
-    # Calculate exact ADR% matching Pine Script
-    df['ADR_pct'] = (raw_adr_rupee / df['close']) * 100
     df = df[df['ADR_pct'] >= min_adr]
             
-    # --- 7. APPLY 5 CUSTOM MA FILTERS ---
+    # Apply MAs
     for ma in ma_filters:
         c_name = ma["col_name"]
         if ma["enabled"] and c_name in df.columns:
             df = df[df['close'] > df[c_name]]
         
-    # --- 8. APPLY LIQUIDITY & RANGE FILTERS ---
     if 'average_volume_60d_calc' in df.columns:
         df['val_traded_60d_inr'] = df['close'] * df['average_volume_60d_calc']
         df = df[df['val_traded_60d_inr'] >= (min_vol60d_cr * 10_000_000)]
@@ -428,7 +393,6 @@ else:
         pct_below_high = ((df['price_52_week_high'] - df['close']) / df['price_52_week_high']) * 100
         df = df[pct_below_high <= max_below_52h]
 
-    # --- 9. DISPLAY FORMATTING ---
     if df.empty:
         st.warning("No stocks passed all criteria. Try broadening your NSE Sector/Industry selections.")
     else:
@@ -439,7 +403,6 @@ else:
         df[f'ADR ({adr_length}D) %'] = df['ADR_pct'].round(2)
         df['TV_Symbol'] = df['exchange'] + ":" + df['name']
         
-        # Round enabled MAs for clean table display
         active_ma_labels = []
         for ma in ma_filters:
             if ma["enabled"] and ma["col_name"] in df.columns:
@@ -457,10 +420,7 @@ else:
         st.subheader(f"📊 Filtered Results ({len(df)} Stocks Found)")
         st.dataframe(df[table_columns], use_container_width=True, hide_index=True)
         
-        # --- TRADINGVIEW WATCHLIST EXPORT ---
         st.markdown("---")
         st.subheader("📋 Copy to TradingView Watchlist")
-        st.write("Copy the text string below and paste it directly into your TradingView Watchlist **Symbol Search / Import** box:")
-        
         tv_watchlist_string = ", ".join(df['TV_Symbol'].tolist())
         st.code(tv_watchlist_string, language="text")
