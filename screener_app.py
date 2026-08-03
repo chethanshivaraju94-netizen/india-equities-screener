@@ -650,17 +650,10 @@ else:
                 with col_chart:
                     ticker_only = active_symbol.split(":")[-1]
 
-                    # Controls Bar: Exchange Switcher + Deep Link Button
-                    c_title, c_ex_switch, c_link = st.columns([2.0, 1.2, 1.3])
+                    # Controls Bar: Clean Header + Direct Deep Link Button
+                    c_title, c_link = st.columns([2.5, 1.5])
                     with c_title:
                         st.markdown(f"### 📈 {active_symbol}")
-                    with c_ex_switch:
-                        widget_prefix = st.selectbox(
-                            "Widget Exchange:",
-                            options=["BSE", "NSE"],
-                            index=0,
-                            help="BSE is recommended to bypass TradingView iframe embed blocks. Use NSE for direct links."
-                        )
                     with c_link:
                         deep_link_url = f"https://www.tradingview.com/chart/?symbol=NSE:{ticker_only}"
                         st.markdown(
@@ -668,13 +661,9 @@ else:
                             unsafe_allow_html=True
                         )
 
-                    widget_symbol = f"{widget_prefix}:{ticker_only}"
+                    # Strictly use BSE in the embedded iframe so it never throws a licensing block
+                    widget_symbol = f"BSE:{ticker_only}"
                     
-                    # Dynamically inject active Screener MAs into chart widget studies
-                    active_studies = ["STD;SMA"]
-                    if any(m["enabled"] and m["col_name"]=="EMA21" for m in ma_filters):
-                        active_studies.append("STD;EMA")
-
                     chart_widget_html = f"""
                     <div class="tradingview-widget-container" style="height:620px;width:100%;margin:0;padding:0;overflow:hidden;">
                       <div id="tradingview_chart_container" style="height:620px;width:100%"></div>
