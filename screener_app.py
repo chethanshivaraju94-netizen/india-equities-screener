@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed and the complete **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by TradingView speed, **5 Custom MAs**, **Custom ADR Length**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -193,9 +193,6 @@ TV_TO_INDIAN_MAP = {
 }
 
 def map_to_indian_classification(tv_industry, tv_sector):
-    """
-    Looks up exact TradingView pair first, then falls back safely if a new industry appears.
-    """
     mapped = TV_TO_INDIAN_MAP.get((tv_sector, tv_industry))
     if mapped:
         return mapped
@@ -204,35 +201,34 @@ def map_to_indian_classification(tv_industry, tv_sector):
 # ==========================================
 # 2. BACKEND SCREENER LOGIC
 # ==========================================
-def fetch_screener_data(exchanges, min_mcap, min_adr_val, limit_rows):
+def fetch_screener_data(exchanges, min_mcap, min_adr_val, adr_length, ma_columns_to_fetch, limit_rows):
     if not exchanges:
         return pd.DataFrame()
     
     min_mcap_inr = min_mcap * 10_000_000
     
+    # Base columns
+    select_cols = [
+        'name', 'close', 'change', 'volume', 'market_cap_basic',
+        'average_volume_60d_calc', 'ADR', 'price_52_week_high',
+        'price_52_week_low', 'exchange', 'type', 'industry', 'sector'
+    ]
+    
+    # Request custom ADR length column if supported by TV
+    adr_custom_col = f"ADR.{adr_length}"
+    if adr_custom_col not in select_cols:
+        select_cols.append(adr_custom_col)
+        
+    # Add unique user-selected MA columns (e.g. EMA20, SMA50)
+    for c in ma_columns_to_fetch:
+        if c not in select_cols:
+            select_cols.append(c)
+    
     q = (Query()
          .set_markets('india')
-         .select(
-             'name', 
-             'close', 
-             'change', 
-             'volume', 
-             'market_cap_basic', 
-             'EMA21',
-             'SMA50', 
-             'SMA200',
-             'average_volume_60d_calc',
-             'ADR',
-             'price_52_week_high',
-             'price_52_week_low',
-             'exchange',
-             'type',
-             'industry',
-             'sector'
-         )
+         .select(*select_cols)
          .where(
-             col('market_cap_basic') >= min_mcap_inr,
-             col('ADR') >= min_adr_val
+             col('market_cap_basic') >= min_mcap_inr
          )
          .order_by('volume', ascending=False)
          .limit(limit_rows)
@@ -246,7 +242,7 @@ def fetch_screener_data(exchanges, min_mcap, min_adr_val, limit_rows):
         return pd.DataFrame()
 
 # ==========================================
-# 3. SIDEBAR CONTROLS & DYNAMIC DROPDOWNS
+# 3. SIDEBAR CONTROLS
 # ==========================================
 with st.sidebar.form("filter_form"):
     st.header("1. Exchange & Universe")
@@ -259,7 +255,6 @@ with st.sidebar.form("filter_form"):
     st.markdown("---")
     st.header("🏛️ Official NSE Filters (22 / 59)")
     
-    # 1. NSE Sector Dropdown (22 Official Economic Sectors)
     sector_options = list(INDIAN_SECTOR_HIERARCHY.keys())
     sector_choice = st.multiselect(
         "NSE Sector (22 Economic Sectors):",
@@ -267,7 +262,6 @@ with st.sidebar.form("filter_form"):
         default=[]
     )
     
-    # 2. Cascading NSE Industry Dropdown (59 Distinct Industries)
     if sector_choice:
         industry_options = []
         for sec in sector_choice:
@@ -294,16 +288,51 @@ with st.sidebar.form("filter_form"):
         min_value=0.0, value=5.0, step=0.5
     )
 
-    st.header("3. Trend & Moving Averages")
-    above_ema21 = st.checkbox("Price > EMA 21", value=True)
-    above_sma50 = st.checkbox("Price > SMA 50", value=True)
-    above_sma200 = st.checkbox("Price > SMA 200", value=True)
+    # --- 5 CUSTOMIZABLE MOVING AVERAGE SLOTS ---
+    st.markdown("---")
+    st.header("3. Trend & Moving Averages (5 MAs)")
+    st.caption("Select EMA/SMA and type any length. Check to enforce **Price > MA**.")
+    
+    default_ma_configs = [
+        {"en": True,  "type": "EMA", "len": 21},  # MA 1
+        {"en": True,  "type": "SMA", "len": 50},  # MA 2
+        {"en": True,  "type": "SMA", "len": 200}, # MA 3
+        {"en": False, "type": "EMA", "len": 10},  # MA 4
+        {"en": False, "type": "SMA", "len": 150}  # MA 5
+    ]
+    
+    ma_filters = []
+    for i, cfg in enumerate(default_ma_configs, 1):
+        c1, c2, c3 = st.columns([1.8, 1.6, 1.6])
+        with c1:
+            en = st.checkbox(f"MA {i} >", value=cfg["en"], key=f"ma_{i}_en")
+        with c2:
+            m_type = st.selectbox("Type", ["EMA", "SMA"], index=0 if cfg["type"]=="EMA" else 1, key=f"ma_{i}_type", label_visibility="collapsed")
+        with c3:
+            m_len = st.number_input("Len", min_value=1, max_value=500, value=cfg["len"], step=1, key=f"ma_{i}_len", label_visibility="collapsed")
+            
+        col_name = f"{m_type}{m_len}"
+        ma_filters.append({
+            "enabled": en,
+            "type": m_type,
+            "length": m_len,
+            "col_name": col_name,
+            "label": f"{m_type} {m_len}"
+        })
 
+    # --- CUSTOM ADR LENGTH & VOLATILITY ---
+    st.markdown("---")
     st.header("4. Volatility & 52-Week Range")
-    min_adr = st.slider("Min ADR % (Average Daily Range):", min_value=0.0, max_value=10.0, value=2.25, step=0.25)
+    adr_length = st.number_input(
+        "ADR Length (Days):", 
+        min_value=1, max_value=100, value=20, step=1,
+        help="CAN SLIM / Minervini standard is 20 days."
+    )
+    min_adr = st.slider("Min ADR %:", min_value=0.0, max_value=10.0, value=2.25, step=0.25)
     min_above_52l = st.slider("Min % Above 52-Week Low:", min_value=0, max_value=100, value=20, step=5)
     max_below_52h = st.slider("Max % Below 52-Week High (0% to X%):", min_value=0, max_value=50, value=30, step=5)
 
+    st.markdown("---")
     st.header("5. Display Settings")
     max_results = st.slider("Max Results to Fetch:", min_value=500, max_value=3000, value=2500, step=250)
     
@@ -312,11 +341,16 @@ with st.sidebar.form("filter_form"):
 # ==========================================
 # 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
-with st.spinner("Scanning Indian Equities & Mapping 22 Sectors / 59 Industries..."):
+# Collect unique Moving Average columns to fetch from API
+ma_cols_to_fetch = list(set([m["col_name"] for m in ma_filters]))
+
+with st.spinner("Scanning Indian Equities & Applying Custom Filters..."):
     results_df = fetch_screener_data(
         exchange_choice,
         min_mcap_cr,
         min_adr,
+        adr_length,
+        ma_cols_to_fetch,
         max_results
     )
 
@@ -355,21 +389,31 @@ else:
     # --- SAFE NUMERIC CONVERSION ---
     numeric_cols = [
         'market_cap_basic', 'close', 'change', 'volume', 
-        'EMA21', 'SMA50', 'SMA200', 'average_volume_60d_calc', 
-        'ADR', 'price_52_week_high', 'price_52_week_low'
-    ]
+        'average_volume_60d_calc', 'ADR', 'price_52_week_high', 'price_52_week_low'
+    ] + ma_cols_to_fetch + [f"ADR.{adr_length}"]
+    
     for col_name in numeric_cols:
         if col_name in df.columns:
             df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
             
-    # --- APPLY TECHNICAL & FUNDAMENTAL FILTERS ---
-    if above_ema21 and 'EMA21' in df.columns:
-        df = df[df['close'] > df['EMA21']]
-    if above_sma50 and 'SMA50' in df.columns:
-        df = df[df['close'] > df['SMA50']]
-    if above_sma200 and 'SMA200' in df.columns:
-        df = df[df['close'] > df['SMA200']]
+    # --- 6. HANDLE ADR LENGTH SAFELY ---
+    custom_adr_col = f"ADR.{adr_length}"
+    if custom_adr_col in df.columns and not df[custom_adr_col].isna().all():
+        df['ADR_calc'] = df[custom_adr_col]
+    elif 'ADR' in df.columns:
+        df['ADR_calc'] = df['ADR']  # Fallback to standard ADR if custom length not in DB
+    else:
+        df['ADR_calc'] = 0.0
         
+    df = df[df['ADR_calc'] >= min_adr]
+            
+    # --- 7. APPLY 5 CUSTOM MA FILTERS ---
+    for ma in ma_filters:
+        c_name = ma["col_name"]
+        if ma["enabled"] and c_name in df.columns:
+            df = df[df['close'] > df[c_name]]
+        
+    # --- 8. APPLY LIQUIDITY & RANGE FILTERS ---
     if 'average_volume_60d_calc' in df.columns:
         df['val_traded_60d_inr'] = df['close'] * df['average_volume_60d_calc']
         df = df[df['val_traded_60d_inr'] >= (min_vol60d_cr * 10_000_000)]
@@ -382,7 +426,7 @@ else:
         pct_below_high = ((df['price_52_week_high'] - df['close']) / df['price_52_week_high']) * 100
         df = df[pct_below_high <= max_below_52h]
 
-    # --- DISPLAY FORMATTING ---
+    # --- 9. DISPLAY FORMATTING ---
     if df.empty:
         st.warning("No stocks passed all criteria. Try broadening your NSE Sector/Industry selections.")
     else:
@@ -390,12 +434,21 @@ else:
         df['60D Vol (₹ Cr)'] = (df['val_traded_60d_inr'] / 10_000_000).round(2)
         df['Close'] = df['close'].round(2)
         df['Change %'] = df['change'].round(2)
-        df['ADR %'] = df['ADR'].round(2)
+        df[f'ADR ({adr_length}D) %'] = df['ADR_calc'].round(2)
         df['TV_Symbol'] = df['exchange'] + ":" + df['name']
+        
+        # Round enabled MAs for clean table display
+        active_ma_labels = []
+        for ma in ma_filters:
+            if ma["enabled"] and ma["col_name"] in df.columns:
+                df[ma["label"]] = df[ma["col_name"]].round(2)
+                active_ma_labels.append(ma["label"])
         
         table_columns = [
             'TV_Symbol', 'name', 'Close', 'Change %', 
-            'ADR %', '60D Vol (₹ Cr)', 'Market Cap (₹ Cr)', 
+            f'ADR ({adr_length}D) %'
+        ] + active_ma_labels + [
+            '60D Vol (₹ Cr)', 'Market Cap (₹ Cr)', 
             'Sector', 'Industry'
         ]
         
