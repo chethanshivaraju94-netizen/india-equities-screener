@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Custom Avg Volume Periods**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -184,16 +184,17 @@ def map_to_indian_classification(tv_industry, tv_sector):
 # ==========================================
 # 2. BACKEND SCREENER LOGIC
 # ==========================================
-def fetch_screener_data(exchanges, min_mcap, ma_columns_to_fetch, limit_rows):
+def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetch, limit_rows):
     if not exchanges:
         return pd.DataFrame()
     
     min_mcap_inr = min_mcap * 10_000_000
+    vol_calc_col = f"average_volume_{vol_period_days}d_calc"
     
     # Base columns fetched in a single high-speed query
     select_cols = [
         'name', 'close', 'change', 'volume', 'market_cap_basic',
-        'average_volume_60d_calc', 'ADR', 'price_52_week_high',
+        vol_calc_col, 'ADR', 'price_52_week_high',
         'price_52_week_low', 'exchange', 'type', 'industry', 'sector'
     ]
     
@@ -247,7 +248,16 @@ with st.sidebar.form("filter_form"):
     st.markdown("---")
     st.header("2. Fundamental & Liquidity")
     min_mcap_cr = st.number_input("Min Market Cap (₹ Crores):", min_value=0, value=1000, step=100)
-    min_vol60d_cr = st.number_input("Min 60D Avg Rupee Volume (₹ Cr):", min_value=0.0, value=5.0, step=0.5)
+    
+    # --- CUSTOM AVERAGE VOLUME PERIOD DROPDOWN ---
+    vol_period_days = st.selectbox(
+        "Average Volume Period:",
+        options=[10, 30, 60, 90],
+        index=2,
+        format_func=lambda x: f"{x} Days",
+        help="Standard average volume periods supported by TradingView."
+    )
+    min_vol_cr = st.number_input(f"Min {vol_period_days}D Avg Rupee Volume (₹ Cr):", min_value=0.0, value=5.0, step=0.5)
 
     # --- 5 CUSTOMIZABLE MOVING AVERAGE SLOTS ---
     st.markdown("---")
@@ -292,9 +302,10 @@ with st.sidebar.form("filter_form"):
 # 4. FETCH, ENRICH & FILTER DATA
 # ==========================================
 ma_cols_to_fetch = list(set([m["col_name"] for m in ma_filters]))
+vol_col_name = f"average_volume_{vol_period_days}d_calc"
 
 with st.spinner("⚡ Scanning Indian Equities & Calculating Instant ADR%..."):
-    results_df = fetch_screener_data(exchange_choice, min_mcap_cr, ma_cols_to_fetch, max_results)
+    results_df = fetch_screener_data(exchange_choice, min_mcap_cr, vol_period_days, ma_cols_to_fetch, max_results)
 
 if results_df.empty:
     st.warning("No stocks matched your criteria. Click 'Apply Filters' after adjusting your parameters.")
@@ -319,13 +330,12 @@ else:
     if industry_choice:
         df = df[df["Industry"].isin(industry_choice)]
     
-    numeric_cols = ['market_cap_basic', 'close', 'change', 'volume', 'average_volume_60d_calc', 'ADR', 'price_52_week_high', 'price_52_week_low'] + ma_cols_to_fetch
+    numeric_cols = ['market_cap_basic', 'close', 'change', 'volume', vol_col_name, 'ADR', 'price_52_week_high', 'price_52_week_low'] + ma_cols_to_fetch
     for c in numeric_cols:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce')
             
     # --- INSTANT VECTORIZED ADR% CALCULATION (< 0.01s) ---
-    # Convert TradingView's native Rupee ADR into a percentage of Close Price
     df['ADR_pct'] = (df['ADR'] / df['close']) * 100
     df = df[df['ADR_pct'] >= min_adr]
             
@@ -335,9 +345,10 @@ else:
         if ma["enabled"] and c_name in df.columns:
             df = df[df['close'] > df[c_name]]
         
-    if 'average_volume_60d_calc' in df.columns:
-        df['val_traded_60d_inr'] = df['close'] * df['average_volume_60d_calc']
-        df = df[df['val_traded_60d_inr'] >= (min_vol60d_cr * 10_000_000)]
+    # --- DYNAMIC RUPEE VOLUME FILTER ---
+    if vol_col_name in df.columns:
+        df['val_traded_inr'] = df['close'] * df[vol_col_name]
+        df = df[df['val_traded_inr'] >= (min_vol_cr * 10_000_000)]
         
     if 'price_52_week_low' in df.columns:
         pct_above_low = ((df['close'] - df['price_52_week_low']) / df['price_52_week_low']) * 100
@@ -351,7 +362,11 @@ else:
         st.warning("No stocks passed all criteria. Try broadening your NSE Sector/Industry selections.")
     else:
         df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
-        df['60D Vol (₹ Cr)'] = (df['val_traded_60d_inr'] / 10_000_000).round(2)
+        
+        # Format Dynamic Table Label based on selected period
+        vol_display_label = f"{vol_period_days}D Vol (₹ Cr)"
+        df[vol_display_label] = (df['val_traded_inr'] / 10_000_000).round(2)
+        
         df['Close'] = df['close'].round(2)
         df['Change %'] = df['change'].round(2)
         df['ADR %'] = df['ADR_pct'].round(2)
@@ -367,7 +382,7 @@ else:
             'TV_Symbol', 'name', 'Close', 'Change %', 
             'ADR %'
         ] + active_ma_labels + [
-            '60D Vol (₹ Cr)', 'Market Cap (₹ Cr)', 
+            vol_display_label, 'Market Cap (₹ Cr)', 
             'Sector', 'Industry'
         ]
         
