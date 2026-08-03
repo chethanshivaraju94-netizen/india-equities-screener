@@ -535,6 +535,9 @@ with tab_screener:
                         st.session_state.reset_counter += 1
                         st.rerun()
 
+            # --- SERIAL NUMBER ADDED ---
+            df_display['S.No.'] = range(1, len(df_display) + 1)
+            
             df_display['Market Cap (₹ Cr)'] = (df_display['market_cap_basic'] / 10_000_000).round(2)
             vol_display_label = f"{vol_period_days}D Close×AvgVol (₹ Cr)"
             df_display[vol_display_label] = (df_display['val_traded_inr'] / 10_000_000).round(2)
@@ -553,7 +556,7 @@ with tab_screener:
                     active_ma_labels.append(ma["label"])
             
             table_columns = [
-                'TV_Symbol', 'name', 'Close', 'Change %', 
+                'S.No.', 'TV_Symbol', 'name', 'Close', 'Change %', 
                 'ADR %'
             ] + active_ma_labels + [
                 vol_display_label, 'Market Cap (₹ Cr)', 
@@ -578,6 +581,8 @@ with tab_screener:
             )
             
             selected_rows = parse_table_selection_multi(table_ev_scan, df_display, "TV_Symbol")
+            
+            # 1-CLICK ADD SELECTED TO WATCHLIST
             st.markdown("---")
             cw1, cw2, cw3 = st.columns([1.8, 1.5, 1.2])
             with cw1:
@@ -596,8 +601,13 @@ with tab_screener:
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.caption("💡 Check rows above to enable bulk quick-add.")
 
+            # --- SELECTIVE vs ALL TRADINGVIEW EXPORT ---
             st.markdown("---")
-            st.subheader("📋 Copy All Results to TradingView Watchlist")
+            if len(selected_rows) > 0:
+                st.subheader(f"📋 Copy Selected Setups to TradingView ({len(selected_rows)} Stocks)")
+                st.code(", ".join(selected_rows), language="text")
+            
+            st.subheader(f"📋 Copy All Results to TradingView ({len(df_display)} Stocks)")
             tv_watchlist_string = ", ".join(df_display['TV_Symbol'].tolist())
             st.code(tv_watchlist_string, language="text")
 
@@ -685,11 +695,13 @@ with tab_watchlists:
             for col_name in ['name', 'Close', 'Change %', 'ADR_pct', 'Market Cap (₹ Cr)', 'Sector', 'Industry']:
                 merged_df[col_name] = "N/A"
 
+        # --- SERIAL NUMBER ADDED TO WATCHLIST ---
+        merged_df['S.No.'] = range(1, len(merged_df) + 1)
         merged_df['ADR %'] = merged_df.get('ADR_pct', "N/A")
         
         # Clickable TradingView Deep-Link for Watchlist symbols
         merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
-        wl_cols = ['TV_Symbol', 'Close', 'Change %', 'ADR %', 'Market Cap (₹ Cr)', 'Sector', 'Industry', 'TV_Link']
+        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'Market Cap (₹ Cr)', 'Sector', 'Industry', 'TV_Link']
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
 
