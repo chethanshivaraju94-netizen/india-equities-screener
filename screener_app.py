@@ -13,13 +13,13 @@ st.set_page_config(
 # Initialize Session State for Interactive Drilldown & Widget Reset
 if "drilldown_type" not in st.session_state:
     st.session_state.drilldown_type = None
-if "drilldown_val" not in st.session_state:
-    st.session_state.drilldown_val = None
+if "drilldown_vals" not in st.session_state:
+    st.session_state.drilldown_vals = []
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Hierarchical Sector → Industry Drilldown**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Hierarchical Multi-Select Sector → Industry Drilldown**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -190,24 +190,26 @@ def map_to_indian_classification(tv_industry, tv_sector):
         return mapped
     return "Diversified", "Diversified Commercial Services"
 
-# Safe parser for Streamlit Plotly / Table selection events
-def parse_chart_selection(event):
+# Safe multi-selection parsers for Streamlit Plotly / Table events
+def parse_chart_selection_multi(event):
     if event and isinstance(event, dict):
         sel = event.get("selection", {})
         points = sel.get("points", [])
-        if points and len(points) > 0:
-            return points[0].get("label")
-    return None
+        if points:
+            return [p.get("label") for p in points if p.get("label")]
+    return []
 
-def parse_table_selection(event, df_source, col_name):
+def parse_table_selection_multi(event, df_source, col_name):
     if event and isinstance(event, dict):
         sel = event.get("selection", {})
         rows = sel.get("rows", [])
-        if rows and len(rows) > 0:
-            idx = rows[0]
-            if idx < len(df_source):
-                return df_source.iloc[idx][col_name]
-    return None
+        if rows:
+            selected_vals = []
+            for idx in rows:
+                if idx < len(df_source):
+                    selected_vals.append(df_source.iloc[idx][col_name])
+            return selected_vals
+    return []
 
 # ==========================================
 # 2. BACKEND SCREENER LOGIC
@@ -327,7 +329,7 @@ with st.sidebar.form("filter_form"):
 # Reset drilldown when new filters are applied from sidebar
 if apply_filters:
     st.session_state.drilldown_type = None
-    st.session_state.drilldown_val = None
+    st.session_state.drilldown_vals = []
 
 # ==========================================
 # 4. FETCH, ENRICH & FILTER DATA
@@ -448,27 +450,29 @@ else:
                     hide_index=True, 
                     height=360,
                     on_select="rerun",
-                    selection_mode="single-row",
+                    selection_mode="multi-row",
                     key=f"sec_table_{rc}"
                 )
             
-            # Detect Sector Click (Chart or Table)
-            sel_sec_chart = parse_chart_selection(chart_ev_sec)
-            sel_sec_table = parse_table_selection(table_ev_sec, sec_counts, "Sector")
+            # Detect Sector Multi-Click (Chart or Table)
+            sel_sec_chart = parse_chart_selection_multi(chart_ev_sec)
+            sel_sec_table = parse_table_selection_multi(table_ev_sec, sec_counts, "Sector")
+            
             if sel_sec_chart:
                 st.session_state.drilldown_type = "Sector"
-                st.session_state.drilldown_val = sel_sec_chart
+                st.session_state.drilldown_vals = sel_sec_chart
             elif sel_sec_table:
                 st.session_state.drilldown_type = "Sector"
-                st.session_state.drilldown_val = sel_sec_table
+                st.session_state.drilldown_vals = sel_sec_table
 
-        # --- TAB 2: INDUSTRY SUMMARY (HIERARCHICALLY FILTERED BY SECTOR) ---
+        # --- TAB 2: INDUSTRY SUMMARY (HIERARCHICALLY FILTERED BY MULTI-SECTORS) ---
         with tab_industry:
-            # If a Sector is selected, show ONLY Basic Industries belonging to that Sector!
-            if st.session_state.drilldown_type == "Sector" and st.session_state.drilldown_val:
-                df_ind_source = df[df['Sector'] == st.session_state.drilldown_val]
+            # If one or more Sectors are selected, show ONLY Basic Industries inside those Sectors!
+            if st.session_state.drilldown_type == "Sector" and st.session_state.drilldown_vals:
+                df_ind_source = df[df['Sector'].isin(st.session_state.drilldown_vals)]
                 ind_total_passed = len(df_ind_source)
-                st.info(f"🏢 **Hierarchical View:** Showing Basic Industries inside **{st.session_state.drilldown_val}** ({ind_total_passed} Stocks)")
+                sec_list_str = ", ".join(st.session_state.drilldown_vals)
+                st.info(f"🏢 **Hierarchical View:** Showing Basic Industries inside **{sec_list_str}** ({ind_total_passed} Stocks)")
             else:
                 df_ind_source = df
                 ind_total_passed = total_passed
@@ -516,19 +520,20 @@ else:
                     hide_index=True, 
                     height=360,
                     on_select="rerun",
-                    selection_mode="single-row",
+                    selection_mode="multi-row",
                     key=f"ind_table_{rc}"
                 )
                 
-            # Detect Industry Click (Chart or Table)
-            sel_ind_chart = parse_chart_selection(chart_ev_ind)
-            sel_ind_table = parse_table_selection(table_ev_ind, ind_counts, "Basic Industry")
+            # Detect Industry Multi-Click (Chart or Table)
+            sel_ind_chart = parse_chart_selection_multi(chart_ev_ind)
+            sel_ind_table = parse_table_selection_multi(table_ev_ind, ind_counts, "Basic Industry")
+            
             if sel_ind_chart:
                 st.session_state.drilldown_type = "Industry"
-                st.session_state.drilldown_val = sel_ind_chart
+                st.session_state.drilldown_vals = sel_ind_chart
             elif sel_ind_table:
                 st.session_state.drilldown_type = "Industry"
-                st.session_state.drilldown_val = sel_ind_table
+                st.session_state.drilldown_vals = sel_ind_table
 
         # ==========================================
         # 6. ACTIVE DRILLDOWN BANNER & FILTERING
@@ -536,21 +541,22 @@ else:
         st.markdown("---")
         df_display = df.copy()
         
-        if st.session_state.drilldown_val:
+        if st.session_state.drilldown_vals:
+            selected_items_str = ", ".join(st.session_state.drilldown_vals)
             col_info, col_reset = st.columns([3, 1])
             with col_info:
-                st.info(f"🔍 **Active Drilldown:** Showing only stocks in **{st.session_state.drilldown_type} — {st.session_state.drilldown_val}**")
+                st.info(f"🔍 **Active Drilldown:** Showing only stocks in **{st.session_state.drilldown_type} — {selected_items_str}**")
             with col_reset:
                 if st.button("🔄 Reset Scan Results (Show All)", type="primary", use_container_width=True):
                     st.session_state.drilldown_type = None
-                    st.session_state.drilldown_val = None
+                    st.session_state.drilldown_vals = []
                     st.session_state.reset_counter += 1
                     st.rerun()
             
-            # Apply dynamic click filter to DataFrame
-            df_display = df_display[df_display[st.session_state.drilldown_type] == st.session_state.drilldown_val]
+            # Apply dynamic multi-selection filter to DataFrame
+            df_display = df_display[df_display[st.session_state.drilldown_type].isin(st.session_state.drilldown_vals)]
         else:
-            st.caption("💡 **Tip:** Click any slice on the Donut Chart or any row in the Summary Tables above to drill down into a specific Sector or Industry.")
+            st.caption("💡 **Tip:** Select one or more sectors/industries from the tables above to filter the stock list.")
 
         # ==========================================
         # 7. DETAILED FILTERED TABLE & WATCHLIST
@@ -579,8 +585,8 @@ else:
             'Sector', 'Industry'
         ]
         
-        if st.session_state.drilldown_val:
-            st.subheader(f"📋 Filtered Stock Results — {st.session_state.drilldown_val} ({len(df_display)} Stocks)")
+        if st.session_state.drilldown_vals:
+            st.subheader(f"📋 Filtered Stock Results ({len(df_display)} Stocks in Selected Group)")
         else:
             st.subheader(f"📋 Filtered Stock Results ({len(df_display)} Stocks Found)")
             
