@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from tradingview_screener import Query, col
 
 # Set Streamlit Page Configuration
@@ -10,7 +11,7 @@ st.set_page_config(
 )
 
 st.title("📈 India Equities Interactive Screener")
-st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Custom Avg Rupee Volume Periods (10D/30D/60D/90D)**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
+st.markdown("Customizable **CAN SLIM & Trend Screener** powered by **Lightning-Fast TradingView Native ADR%**, **Scan Summary Donut Charts & Rotation Stats**, **5 Custom MAs**, and **Official NSE / AMFI Classification (22 Sectors & 59 Industries)**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -191,7 +192,6 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
     min_mcap_inr = min_mcap * 10_000_000
     tv_vol_col = f"average_volume_{vol_period_days}d_calc"
     
-    # Standard TradingView native columns
     select_cols = [
         'name', 'close', 'change', 'volume', 'market_cap_basic',
         tv_vol_col, 'ADR', 'price_52_week_high',
@@ -249,7 +249,6 @@ with st.sidebar.form("filter_form"):
     st.header("2. Fundamental & Liquidity")
     min_mcap_cr = st.number_input("Min Market Cap (₹ Crores):", min_value=0, value=1000, step=100)
     
-    # --- CUSTOM AVERAGE VOLUME PERIOD DROPDOWN ---
     vol_period_days = st.selectbox(
         "Average Volume Period:",
         options=[10, 30, 60, 90],
@@ -316,7 +315,7 @@ else:
         df = df[df['type'] == 'stock']
     df = df.drop_duplicates(subset=['name'], keep='first')
     
-    # Map Indian Sectors (84-pair lookup table)
+    # Map Indian Sectors (84-pair lookup table) for the ENTIRE universe first
     mapped_sectors, mapped_industries = [], []
     for _, row in df.iterrows():
         sec, ind = map_to_indian_classification(row.get("industry", ""), row.get("sector", ""))
@@ -324,6 +323,10 @@ else:
         mapped_industries.append(ind)
     df["Sector"] = mapped_sectors
     df["Industry"] = mapped_industries
+    
+    # Track Total Universe Counts per Sector and Industry (to calculate % passed)
+    total_sector_counts = df['Sector'].value_counts()
+    total_industry_counts = df['Industry'].value_counts()
         
     if sector_choice:
         df = df[df["Sector"].isin(sector_choice)]
@@ -345,7 +348,7 @@ else:
         if ma["enabled"] and c_name in df.columns:
             df = df[df['close'] > df[c_name]]
         
-    # --- RUPEE VOLUME FILTER (Today's Close × Nd Avg Volume) ---
+    # --- RUPEE VOLUME FILTER ---
     if tv_vol_col in df.columns:
         df['val_traded_inr'] = df['close'] * df[tv_vol_col]
         df = df[df['val_traded_inr'] >= (min_vol_cr * 10_000_000)]
@@ -361,9 +364,76 @@ else:
     if df.empty:
         st.warning("No stocks passed all criteria. Try broadening your NSE Sector/Industry selections.")
     else:
+        total_passed = len(df)
+        
+        # ==========================================
+        # 5. SCAN SUMMARY & ROTATION DASHBOARD
+        # ==========================================
+        st.subheader("📊 Scan Summary & Market Rotation")
+        tab_sector, tab_industry = st.tabs(["🛠️ Sector Summary", "🏢 Basic Industry Summary"])
+        
+        # --- TAB 1: SECTOR SUMMARY ---
+        with tab_sector:
+            sec_counts = df['Sector'].value_counts().reset_index()
+            sec_counts.columns = ['Sector', 'Number of Stocks Passed']
+            sec_counts['% of Stocks Passed Amongst Total Stocks in the Sector'] = sec_counts.apply(
+                lambda r: round((r['Number of Stocks Passed'] / total_sector_counts.get(r['Sector'], 1)) * 100, 1),
+                axis=1
+            )
+            
+            c_chart1, c_table1 = st.columns([1.1, 1.3])
+            with c_chart1:
+                fig_sec = px.pie(
+                    sec_counts, 
+                    names='Sector', 
+                    values='Number of Stocks Passed',
+                    hole=0.55
+                )
+                fig_sec.update_traces(textinfo='percent', textposition='inside')
+                fig_sec.update_layout(
+                    annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)],
+                    showlegend=False,
+                    margin=dict(t=20, b=20, l=20, r=20),
+                    height=360
+                )
+                st.plotly_chart(fig_sec, use_container_width=True)
+            with c_table1:
+                st.dataframe(sec_counts, use_container_width=True, hide_index=True, height=360)
+
+        # --- TAB 2: INDUSTRY SUMMARY ---
+        with tab_industry:
+            ind_counts = df['Industry'].value_counts().reset_index()
+            ind_counts.columns = ['Basic Industry', 'Number of Stocks Passed']
+            ind_counts['% of Stocks Passed Amongst Total Stocks in the Industry'] = ind_counts.apply(
+                lambda r: round((r['Number of Stocks Passed'] / total_industry_counts.get(r['Basic Industry'], 1)) * 100, 1),
+                axis=1
+            )
+            
+            c_chart2, c_table2 = st.columns([1.1, 1.3])
+            with c_chart2:
+                fig_ind = px.pie(
+                    ind_counts, 
+                    names='Basic Industry', 
+                    values='Number of Stocks Passed',
+                    hole=0.55
+                )
+                fig_ind.update_traces(textinfo='percent', textposition='inside')
+                fig_ind.update_layout(
+                    annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)],
+                    showlegend=False,
+                    margin=dict(t=20, b=20, l=20, r=20),
+                    height=360
+                )
+                st.plotly_chart(fig_ind, use_container_width=True)
+            with c_table2:
+                st.dataframe(ind_counts, use_container_width=True, hide_index=True, height=360)
+
+        # ==========================================
+        # 6. DETAILED FILTERED TABLE
+        # ==========================================
+        st.markdown("---")
         df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
         
-        # Explicitly label column as Today's Close × Nd Avg Vol
         vol_display_label = f"{vol_period_days}D Close×AvgVol (₹ Cr)"
         df[vol_display_label] = (df['val_traded_inr'] / 10_000_000).round(2)
         
@@ -386,7 +456,7 @@ else:
             'Sector', 'Industry'
         ]
         
-        st.subheader(f"📊 Filtered Results ({len(df)} Stocks Found)")
+        st.subheader(f"📋 Filtered Stock Results ({total_passed} Stocks Found)")
         st.dataframe(df[table_columns], use_container_width=True, hide_index=True)
         
         st.markdown("---")
