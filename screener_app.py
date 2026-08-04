@@ -6,6 +6,13 @@ import os
 import re
 from tradingview_screener import Query, col
 
+# Attempt to load Drag-and-Drop capability
+try:
+    from streamlit_sortables import sort_items
+    SORTABLES_AVAILABLE = True
+except ImportError:
+    SORTABLES_AVAILABLE = False
+
 # Set Streamlit Page Configuration
 st.set_page_config(
     page_title="India Equities Screener & Watchlist Studio",
@@ -248,7 +255,6 @@ def parse_pasted_tickers(raw_text):
     cleaned = []
     for t in tokens:
         t = t.strip().upper()
-        # Remove any accidental trailing/leading non-alphanumeric chars except ':'
         t = re.sub(r'[^A-Z0-9:]', '', t)
         if not t:
             continue
@@ -257,6 +263,19 @@ def parse_pasted_tickers(raw_text):
         if t not in cleaned:
             cleaned.append(t)
     return cleaned
+
+# Helper functions to shift items up or down in a Python list
+def move_items_up(lst, selected):
+    for i in range(1, len(lst)):
+        if lst[i] in selected and lst[i - 1] not in selected:
+            lst[i - 1], lst[i] = lst[i], lst[i - 1]
+    return lst
+
+def move_items_down(lst, selected):
+    for i in range(len(lst) - 2, -1, -1):
+        if lst[i] in selected and lst[i + 1] not in selected:
+            lst[i + 1], lst[i] = lst[i], lst[i + 1]
+    return lst
 
 # ==========================================
 # 2. BACKEND API QUERIES
@@ -306,7 +325,6 @@ def fetch_watchlist_enrichMENT(symbol_list):
             df['Close'] = df['close'].round(2)
             df['Change %'] = df['change'].round(2)
             df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
-            # Ensure 1 unique row per ticker name
             df = df.drop_duplicates(subset=['name'], keep='first')
             
             mapped_sectors, mapped_industries = [], []
@@ -632,7 +650,6 @@ with tab_watchlists:
         )
         st.session_state.active_watchlist_name = active_wl
         
-        # Inline renaming right below the selectbox
         with st.form("inline_rename_form", clear_on_submit=True):
             r_col1, r_col2 = st.columns([2.6, 1.0])
             with r_col1:
@@ -730,10 +747,27 @@ with tab_watchlists:
     if not current_symbols:
         st.info(f"The watchlist **{active_wl}** is currently empty. Add setups from the Screener tab or paste symbols above!")
     else:
+        # ----------------------------------------------------
+        # VISUAL DRAG & DROP REORDER STUDIO (STREAMLIT-SORTABLES)
+        # ----------------------------------------------------
+        if SORTABLES_AVAILABLE and len(current_symbols) > 1:
+            with st.expander("🖐️ Drag & Drop Watchlist Reorder Studio", expanded=False):
+                st.caption("💡 Drag and drop the ticker chips below with your mouse to reorder your watchlist sequence. Changes save immediately!")
+                drag_sorted_symbols = sort_items(
+                    current_symbols, 
+                    direction="horizontal", 
+                    key=f"drag_sort_{active_wl}_{st.session_state.wl_sel_counter}"
+                )
+                if drag_sorted_symbols != current_symbols:
+                    st.session_state.watchlists[active_wl] = drag_sorted_symbols
+                    save_watchlists(st.session_state.watchlists)
+                    st.rerun()
+        elif not SORTABLES_AVAILABLE and len(current_symbols) > 1:
+            st.caption("💡 **Tip:** Want visual mouse Drag-and-Drop reordering? Run `pip install streamlit-sortables` in your terminal!")
+
         with st.spinner(f"📡 Enriching {len(current_symbols)} Tickers with Live Price & ADR%..."):
             enriched_df = fetch_watchlist_enrichMENT(current_symbols)
 
-        # Merge strictly on bare symbol name to prevent blank/None columns
         ordered_df = pd.DataFrame({
             "TV_Symbol": current_symbols,
             "name": [s.split(":")[-1].strip().upper() for s in current_symbols]
@@ -748,7 +782,6 @@ with tab_watchlists:
             for col_name in ['Close', 'Change %', 'ADR_pct', 'Market Cap (₹ Cr)', 'Sector', 'Industry']:
                 merged_df[col_name] = "N/A"
 
-        # Fill any unresolved gaps cleanly
         merged_df['Close'] = merged_df.get('Close', pd.Series()).fillna("N/A")
         merged_df['Change %'] = merged_df.get('Change %', pd.Series()).fillna("N/A")
         merged_df['ADR %'] = merged_df.get('ADR_pct', pd.Series()).fillna("N/A")
@@ -776,31 +809,47 @@ with tab_watchlists:
             key=f"wl_manage_table_{wsc}"
         )
 
-        sel_to_remove = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
+        sel_symbols = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
         
-        col_wl_promo, col_wl_act1, col_wl_act2 = st.columns([2.0, 1.5, 1.0])
-        with col_wl_promo:
-            promo_target = st.selectbox("Promote Selected To:", options=[name for name in wl_names if name != active_wl] if len(wl_names) > 1 else wl_names, key="promo_target_select")
-            if st.button(f"➡️ Promote Selected ({len(sel_to_remove)}) to '{promo_target}'", type="primary", disabled=len(sel_to_remove)==0):
+        # ----------------------------------------------------
+        # WATCHLIST TABLE ACTION BAR (REORDER / REMOVE / PROMOTE)
+        # ----------------------------------------------------
+        c_up, c_down, c_rem, c_clr = st.columns([1.0, 1.0, 1.4, 1.0])
+        with c_up:
+            if st.button("⬆️ Move Up", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0):
+                st.session_state.watchlists[active_wl] = move_items_up(st.session_state.watchlists[active_wl], sel_symbols)
+                save_watchlists(st.session_state.watchlists)
+                st.rerun()
+        with c_down:
+            if st.button("⬇️ Move Down", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0):
+                st.session_state.watchlists[active_wl] = move_items_down(st.session_state.watchlists[active_wl], sel_symbols)
+                save_watchlists(st.session_state.watchlists)
+                st.rerun()
+        with c_rem:
+            if st.button(f"🗑️ Remove Selected ({len(sel_symbols)})", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0):
+                for sym in sel_symbols:
+                    if sym in st.session_state.watchlists[active_wl]:
+                        st.session_state.watchlists[active_wl].remove(sym)
+                save_watchlists(st.session_state.watchlists)
+                st.rerun()
+        with c_clr:
+            if st.button("🧹 Clear Selection", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0, key="clear_wl_sel_btn"):
+                st.session_state.wl_sel_counter += 1
+                st.rerun()
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        c_promo_sel, c_promo_btn = st.columns([2.0, 1.5])
+        with c_promo_sel:
+            promo_target = st.selectbox("Promote Selected To Target Watchlist:", options=[name for name in wl_names if name != active_wl] if len(wl_names) > 1 else wl_names, key="promo_target_select")
+        with c_promo_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button(f"➡️ Promote Selected ({len(sel_symbols)}) to '{promo_target}'", type="primary", use_container_width=True, disabled=len(sel_symbols)==0):
                 target_list = st.session_state.watchlists[promo_target]
                 cnt = 0
-                for sym in sel_to_remove:
+                for sym in sel_symbols:
                     if sym not in target_list:
                         target_list.append(sym)
                         cnt += 1
                 save_watchlists(st.session_state.watchlists)
                 st.success(f"✅ Promoted {cnt} stocks to **{promo_target}**!")
-                st.rerun()
-        with col_wl_act1:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button(f"🗑️ Remove Selected ({len(sel_to_remove)})", type="secondary", disabled=len(sel_to_remove)==0):
-                for sym in sel_to_remove:
-                    if sym in st.session_state.watchlists[active_wl]:
-                        st.session_state.watchlists[active_wl].remove(sym)
-                save_watchlists(st.session_state.watchlists)
-                st.rerun()
-        with col_wl_act2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🧹 Clear Selection", type="secondary", disabled=len(sel_to_remove)==0, key="clear_wl_sel_btn"):
-                st.session_state.wl_sel_counter += 1
                 st.rerun()
