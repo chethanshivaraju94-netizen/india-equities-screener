@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import json
+import os
 import re
 from tradingview_screener import Query, col
 
@@ -13,28 +14,43 @@ st.set_page_config(
 )
 
 # ==========================================
-# 0. INITIALIZE SESSION STATE
+# 0. LOCAL DISK PERSISTENCE FOR WATCHLISTS
 # ==========================================
+WATCHLIST_FILE = "local_watchlists.json"
+
+def load_watchlists():
+    if os.path.exists(WATCHLIST_FILE):
+        try:
+            with open(WATCHLIST_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "⚡ Day Focus": ["NSE:ZOMATO", "NSE:CDSL", "NSE:TITAGARH"],
+        "🔥 Week Focus": ["NSE:JINDWORLD", "NSE:TRENT", "NSE:HAL", "NSE:RECLTD"],
+        "🛠️ Sector: Capital Goods": ["NSE:BHEL", "NSE:ABB", "NSE:SIEMENS", "NSE:CGPOWER"]
+    }
+
+def save_watchlists(watchlists_dict):
+    try:
+        with open(WATCHLIST_FILE, "w") as f:
+            json.dump(watchlists_dict, f, indent=2)
+    except Exception as e:
+        st.error(f"Error saving to disk: {e}")
+
+if "watchlists" not in st.session_state:
+    st.session_state.watchlists = load_watchlists()
+if "active_watchlist_name" not in st.session_state:
+    st.session_state.active_watchlist_name = list(st.session_state.watchlists.keys())[0]
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
-
-# Counters to programmatically reset dataframe check selection states
 if "scan_sel_counter" not in st.session_state:
     st.session_state.scan_sel_counter = 0
 if "wl_sel_counter" not in st.session_state:
     st.session_state.wl_sel_counter = 0
 
-# Persistent Watchlist Storage in Session State
-if "watchlists" not in st.session_state:
-    st.session_state.watchlists = {
-        "⭐ CAN SLIM Priority": ["NSE:JINDWORLD", "NSE:CDSL", "NSE:TITAGARH", "NSE:RECLTD"],
-        "🚀 Breakout Watch": ["NSE:ZOMATO", "NSE:TRENT", "NSE:HAL"]
-    }
-if "active_watchlist_name" not in st.session_state:
-    st.session_state.active_watchlist_name = "⭐ CAN SLIM Priority"
-
 st.title("📈 India Equities Screener & Watchlist Studio")
-st.markdown("Professional **CAN SLIM Screener**, **Hierarchical Sector → Industry Rotation**, and **Multi-Watchlist Studio with Live ADR% Enrichment**.")
+st.markdown("Professional **CAN SLIM Screener**, **Hierarchical Sector Rotation**, and **Multi-Watchlist Studio with Free-Tier TradingView 30-Stock Hot-Swapping**.")
 
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
@@ -205,7 +221,6 @@ def map_to_indian_classification(tv_industry, tv_sector):
         return mapped
     return "Diversified", "Diversified Commercial Services"
 
-# Safe multi-selection parsers for Streamlit Plotly / Table events
 def parse_chart_selection_multi(event):
     if event and isinstance(event, dict):
         sel = event.get("selection", {})
@@ -226,7 +241,6 @@ def parse_table_selection_multi(event, df_source, col_name):
             return selected_vals
     return []
 
-# String cleaning helper for pasting from TradingView
 def parse_pasted_tickers(raw_text):
     if not raw_text:
         return []
@@ -302,15 +316,11 @@ def fetch_watchlist_enrichMENT(symbol_list):
         return pd.DataFrame()
 
 # ==========================================
-# 3. SIDEBAR CONTROLS & ACTIVE WATCHLIST
+# 3. SIDEBAR CONTROLS
 # ==========================================
 with st.sidebar.form("filter_form"):
     st.header("1. Exchange & Universe")
-    exchange_choice = st.multiselect(
-        "Select Exchanges:",
-        options=["NSE", "BSE"],
-        default=["NSE", "BSE"]
-    )
+    exchange_choice = st.multiselect("Select Exchanges:", options=["NSE", "BSE"], default=["NSE", "BSE"])
     
     st.markdown("---")
     st.header("🏛️ Official NSE Filters (22 / 59)")
@@ -331,14 +341,7 @@ with st.sidebar.form("filter_form"):
     st.markdown("---")
     st.header("2. Fundamental & Liquidity")
     min_mcap_cr = st.number_input("Min Market Cap (₹ Crores):", min_value=0, value=1000, step=100)
-    
-    vol_period_days = st.selectbox(
-        "Average Volume Period:",
-        options=[10, 30, 60, 90],
-        index=2,
-        format_func=lambda x: f"{x} Days",
-        help="Select average volume period (10D, 30D, 60D, or 90D)."
-    )
+    vol_period_days = st.selectbox("Average Volume Period:", options=[10, 30, 60, 90], index=2, format_func=lambda x: f"{x} Days")
     min_vol_cr = st.number_input(f"Min {vol_period_days}D Avg Rupee Volume (₹ Cr):", min_value=0.0, value=5.0, step=0.5)
 
     st.markdown("---")
@@ -360,9 +363,7 @@ with st.sidebar.form("filter_form"):
         with c3:
             m_len = st.number_input("Len", min_value=1, max_value=500, value=cfg["len"], step=1, key=f"ma_{i}_len", label_visibility="collapsed")
         col_name = f"{m_type}{m_len}"
-        ma_filters.append({
-            "enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"
-        })
+        ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
 
     st.markdown("---")
     st.header("4. Volatility & 52-Week Range")
@@ -373,30 +374,17 @@ with st.sidebar.form("filter_form"):
     st.markdown("---")
     st.header("5. Display Settings")
     max_results = st.slider("Max Results to Fetch:", min_value=500, max_value=3000, value=2500, step=250)
-    
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
 if apply_filters:
     st.session_state.reset_counter += 1
-
-# Active Watchlist Switcher in Sidebar
-st.sidebar.markdown("---")
-st.sidebar.subheader("⭐ Target Active Watchlist")
-wl_names = list(st.session_state.watchlists.keys())
-active_wl = st.sidebar.selectbox(
-    "1-Click Add Target:",
-    options=wl_names,
-    index=wl_names.index(st.session_state.active_watchlist_name) if st.session_state.active_watchlist_name in wl_names else 0,
-    key="wl_sidebar_target_selector"
-)
-st.session_state.active_watchlist_name = active_wl
 
 # ==========================================
 # 4. TOP-LEVEL WORKSPACE TABS
 # ==========================================
 tab_screener, tab_watchlists = st.tabs([
     "🔎 CAN SLIM Screener & Rotation",
-    "⭐ Watchlist Studio & TradingView Bridge"
+    "⭐ Multi-Watchlist Studio & TV Free-Tier Bridge"
 ])
 
 # ==========================================
@@ -465,9 +453,6 @@ with tab_screener:
             total_passed = len(df)
             rc = st.session_state.reset_counter
             
-            # ------------------------------------------
-            # SECTOR & INDUSTRY ROTATION TABLES
-            # ------------------------------------------
             st.subheader("📊 Scan Summary & Market Rotation")
             tab_sector_sum, tab_industry_sum = st.tabs(["🛠️ Sector Summary", "🏢 Basic Industry Summary"])
             
@@ -484,7 +469,6 @@ with tab_screener:
                     fig_sec.update_traces(textinfo='percent', textposition='inside')
                     fig_sec.update_layout(annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)], showlegend=False, margin=dict(t=20, b=10, l=20, r=20), height=360)
                     chart_ev_sec = st.plotly_chart(fig_sec, use_container_width=True, on_select="rerun", selection_mode="points", key=f"sec_chart_{rc}")
-                    st.caption("Note: All Percentages are Based on the Total Number of Passed Stocks")
                 with c_table1:
                     table_ev_sec = st.dataframe(sec_counts, use_container_width=True, hide_index=True, height=360, on_select="rerun", selection_mode="multi-row", key=f"sec_table_{rc}")
                 sel_sec_chart = parse_chart_selection_multi(chart_ev_sec)
@@ -512,16 +496,12 @@ with tab_screener:
                     fig_ind.update_traces(textinfo='percent', textposition='inside')
                     fig_ind.update_layout(annotations=[dict(text=f"<b>Total Stocks:<br>{ind_total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)], showlegend=False, margin=dict(t=20, b=10, l=20, r=20), height=360)
                     chart_ev_ind = st.plotly_chart(fig_ind, use_container_width=True, on_select="rerun", selection_mode="points", key=f"ind_chart_{rc}_{sec_hash}")
-                    st.caption("Note: All Percentages are Based on the Total Number of Passed Stocks")
                 with c_table2:
                     table_ev_ind = st.dataframe(ind_counts, use_container_width=True, hide_index=True, height=360, on_select="rerun", selection_mode="multi-row", key=f"ind_table_{rc}_{sec_hash}")
                 sel_ind_chart = parse_chart_selection_multi(chart_ev_ind)
                 sel_ind_table = parse_table_selection_multi(table_ev_ind, ind_counts, "Basic Industry")
                 active_industries = sel_ind_table if sel_ind_table else sel_ind_chart
 
-            # ------------------------------------------
-            # ACTIVE DRILLDOWN & DISPLAY PREPARATION
-            # ------------------------------------------
             st.markdown("---")
             df_display = df.copy()
             if active_sectors:
@@ -549,8 +529,6 @@ with tab_screener:
             df_display['Change %'] = df_display['change'].round(2)
             df_display['ADR %'] = df_display['ADR_pct'].round(2)
             df_display['TV_Symbol'] = df_display['exchange'] + ":" + df_display['name']
-            
-            # Clickable TradingView Deep-Link for every row
             df_display['TV_Link'] = "https://www.tradingview.com/chart/?symbol=NSE:" + df_display['name']
             
             active_ma_labels = []
@@ -567,9 +545,6 @@ with tab_screener:
                 'Sector', 'Industry', 'TV_Link'
             ]
 
-            # ------------------------------------------
-            # SCAN RESULTS TABLE & ACTIONS
-            # ------------------------------------------
             st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
             
             sc = st.session_state.scan_sel_counter
@@ -587,11 +562,10 @@ with tab_screener:
             
             selected_rows = parse_table_selection_multi(table_ev_scan, df_display, "TV_Symbol")
             
-            # ACTION BAR: WATCHLIST ADD + CLEAR SELECTION
             st.markdown("---")
             cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 1.2, 1.0])
             with cw1:
-                target_wl = st.selectbox("Select Target Watchlist to Add Setups:", options=list(st.session_state.watchlists.keys()), index=list(st.session_state.watchlists.keys()).index(st.session_state.active_watchlist_name), key="wl_table_target_select")
+                target_wl = st.selectbox("Select Target Watchlist to Add Setups:", options=list(st.session_state.watchlists.keys()), key="wl_table_target_select")
             with cw2:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button(f"➕ Add Selected ({len(selected_rows)}) to Watchlist", type="primary", use_container_width=True, disabled=len(selected_rows)==0):
@@ -601,6 +575,7 @@ with tab_screener:
                         if sym not in current_list:
                             current_list.append(sym)
                             added_cnt += 1
+                    save_watchlists(st.session_state.watchlists)
                     st.success(f"✅ Successfully added {added_cnt} new stocks to **{target_wl}**!")
             with cw3:
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -611,7 +586,6 @@ with tab_screener:
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.caption("💡 Check rows above to enable actions.")
 
-            # SELECTIVE vs ALL TRADINGVIEW EXPORT
             st.markdown("---")
             if len(selected_rows) > 0:
                 st.subheader(f"📋 Copy Selected Setups to TradingView ({len(selected_rows)} Stocks)")
@@ -622,10 +596,10 @@ with tab_screener:
             st.code(tv_watchlist_string, language="text")
 
 # ==========================================
-# TAB 2: WATCHLIST STUDIO & TRADINGVIEW BRIDGE
+# TAB 2: WATCHLIST STUDIO & TV FREE-TIER BRIDGE
 # ==========================================
 with tab_watchlists:
-    st.subheader("⭐ Multi-Watchlist Studio & TradingView Bridge")
+    st.subheader("⭐ Multi-Watchlist Studio (Bypasses TV Free Tier 30-Symbol Cap)")
     
     col_sel, col_new, col_del = st.columns([2.0, 1.8, 1.0])
     with col_sel:
@@ -639,11 +613,12 @@ with tab_watchlists:
         st.session_state.active_watchlist_name = active_wl
     with col_new:
         with st.form("create_wl_form", clear_on_submit=True):
-            new_wl_name = st.text_input("Create New Watchlist:", placeholder="e.g., Q3 Breakout Watch")
+            new_wl_name = st.text_input("Create New Watchlist:", placeholder="e.g., Sector: Capital Goods Build")
             if st.form_submit_button("➕ Create Watchlist", use_container_width=True):
                 if new_wl_name and new_wl_name not in st.session_state.watchlists:
                     st.session_state.watchlists[new_wl_name] = []
                     st.session_state.active_watchlist_name = new_wl_name
+                    save_watchlists(st.session_state.watchlists)
                     st.success(f"Created Watchlist: {new_wl_name}")
                     st.rerun()
     with col_del:
@@ -651,10 +626,34 @@ with tab_watchlists:
         if len(wl_names) > 1:
             if st.button("🗑️ Delete Watchlist", type="secondary", use_container_width=True):
                 del st.session_state.watchlists[active_wl]
+                save_watchlists(st.session_state.watchlists)
                 st.session_state.active_watchlist_name = list(st.session_state.watchlists.keys())[0]
                 st.rerun()
 
-    with st.expander("📥 Import / Paste Tickers from TradingView & Backup JSON Library", expanded=False):
+    # ----------------------------------------------------
+    # 30-TICKER CHUNKED EXPORTER FOR TRADINGVIEW FREE TIER
+    # ----------------------------------------------------
+    current_symbols = st.session_state.watchlists[active_wl]
+    
+    if current_symbols:
+        st.markdown("---")
+        st.markdown("#### ⚡ 30-Symbol TradingView Hot-Swap Batches")
+        st.caption("💡 **Free Tier Bypass Workflow:** In TradingView, keep **ONE** empty custom watchlist. Click any 30-stock batch below, press **`Ctrl+A`** $\rightarrow$ **`Backspace`** $\rightarrow$ **`Ctrl+V`** in your TV watchlist box to instantly swap and scan with your keyboard **`↓`** key!")
+        
+        batch_size = 30
+        batches = [current_symbols[i:i + batch_size] for i in range(0, len(current_symbols), batch_size)]
+        
+        batch_cols = st.columns(min(len(batches), 4))
+        for idx, b_list in enumerate(batches):
+            col_idx = idx % 4
+            with batch_cols[col_idx]:
+                st.markdown(f"**Batch {idx+1} ({idx*batch_size + 1}–{idx*batch_size + len(b_list)})**")
+                st.code(", ".join(b_list), language="text")
+
+    # ----------------------------------------------------
+    # IMPORT TICKERS & PROMOTE / MOVE BETWEEN WATCHLISTS
+    # ----------------------------------------------------
+    with st.expander("📥 Import / Paste Tickers & Backup Local JSON Library", expanded=False):
         ci1, ci2 = st.columns([2, 1])
         with ci1:
             pasted_text = st.text_area("Paste Tickers from TradingView (Comma, Space, or Newline separated):", placeholder="NSE:RELIANCE, BSE:TCS, ZOMATO, TRENT\nNSE:HAL")
@@ -666,15 +665,16 @@ with tab_watchlists:
                     if s not in current_list:
                         current_list.append(s)
                         added += 1
+                save_watchlists(st.session_state.watchlists)
                 st.success(f"✅ Imported {added} symbols into **{active_wl}**!")
                 st.rerun()
         with ci2:
-            st.markdown("#### 💾 Backup & Restore Library")
+            st.markdown("#### 💾 Backup & Restore Disk Library")
             json_str = json.dumps(st.session_state.watchlists, indent=2)
             st.download_button(
-                label="📥 Download All Watchlists (JSON)",
+                label="📥 Download Watchlists (JSON)",
                 data=json_str,
-                file_name="my_india_watchlists.json",
+                file_name="local_watchlists.json",
                 mime="application/json",
                 use_container_width=True
             )
@@ -685,12 +685,12 @@ with tab_watchlists:
                     if isinstance(loaded_wls, dict):
                         st.session_state.watchlists = loaded_wls
                         st.session_state.active_watchlist_name = list(loaded_wls.keys())[0]
+                        save_watchlists(loaded_wls)
                         st.success("✅ Watchlists restored successfully!")
                         st.rerun()
                 except Exception as e:
                     st.error("Invalid JSON format.")
 
-    current_symbols = st.session_state.watchlists[active_wl]
     if not current_symbols:
         st.info(f"The watchlist **{active_wl}** is currently empty. Add setups from the Screener tab or paste symbols above!")
     else:
@@ -707,8 +707,6 @@ with tab_watchlists:
 
         merged_df['S.No.'] = range(1, len(merged_df) + 1)
         merged_df['ADR %'] = merged_df.get('ADR_pct', "N/A")
-        
-        # Clickable TradingView Deep-Link for Watchlist symbols
         merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
         wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'Market Cap (₹ Cr)', 'Sector', 'Industry', 'TV_Link']
 
@@ -730,19 +728,30 @@ with tab_watchlists:
 
         sel_to_remove = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
         
-        col_wl_act1, col_wl_act2 = st.columns([1.5, 1.2])
+        # ACTIONS: PROMOTE TO ANOTHER WATCHLIST / REMOVE / CLEAR
+        col_wl_promo, col_wl_act1, col_wl_act2 = st.columns([2.0, 1.5, 1.0])
+        with col_wl_promo:
+            promo_target = st.selectbox("Promote Selected To:", options=[name for name in wl_names if name != active_wl] if len(wl_names) > 1 else wl_names, key="promo_target_select")
+            if st.button(f"➡️ Promote Selected ({len(sel_to_remove)}) to '{promo_target}'", type="primary", disabled=len(sel_to_remove)==0):
+                target_list = st.session_state.watchlists[promo_target]
+                cnt = 0
+                for sym in sel_to_remove:
+                    if sym not in target_list:
+                        target_list.append(sym)
+                        cnt += 1
+                save_watchlists(st.session_state.watchlists)
+                st.success(f"✅ Promoted {cnt} stocks to **{promo_target}**!")
+                st.rerun()
         with col_wl_act1:
-            if st.button(f"🗑️ Remove Selected ({len(sel_to_remove)}) from '{active_wl}'", type="secondary", disabled=len(sel_to_remove)==0):
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button(f"🗑️ Remove Selected ({len(sel_to_remove)})", type="secondary", disabled=len(sel_to_remove)==0):
                 for sym in sel_to_remove:
                     if sym in st.session_state.watchlists[active_wl]:
                         st.session_state.watchlists[active_wl].remove(sym)
+                save_watchlists(st.session_state.watchlists)
                 st.rerun()
         with col_wl_act2:
+            st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🧹 Clear Selection", type="secondary", disabled=len(sel_to_remove)==0, key="clear_wl_sel_btn"):
                 st.session_state.wl_sel_counter += 1
                 st.rerun()
-
-        st.markdown("---")
-        st.subheader("📋 Copy Watchlist to TradingView Clipboard")
-        tv_export_string = ", ".join(current_symbols)
-        st.code(tv_export_string, language="text")
