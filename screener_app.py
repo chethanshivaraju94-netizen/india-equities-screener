@@ -264,19 +264,6 @@ def parse_pasted_tickers(raw_text):
             cleaned.append(t)
     return cleaned
 
-# Helper functions to shift items up or down in a Python list
-def move_items_up(lst, selected):
-    for i in range(1, len(lst)):
-        if lst[i] in selected and lst[i - 1] not in selected:
-            lst[i - 1], lst[i] = lst[i], lst[i - 1]
-    return lst
-
-def move_items_down(lst, selected):
-    for i in range(len(lst) - 2, -1, -1):
-        if lst[i] in selected and lst[i + 1] not in selected:
-            lst[i + 1], lst[i] = lst[i], lst[i + 1]
-    return lst
-
 # ==========================================
 # 2. BACKEND API QUERIES
 # ==========================================
@@ -636,9 +623,6 @@ with tab_screener:
 with tab_watchlists:
     st.subheader("⭐ Multi-Watchlist Studio (Bypasses TV Free Tier 30-Symbol Cap)")
     
-    # ----------------------------------------------------
-    # INLINE RENAME / CREATE / DELETE CONTROLS
-    # ----------------------------------------------------
     col_sel, col_new, col_del = st.columns([2.4, 1.8, 0.8])
     with col_sel:
         wl_names = list(st.session_state.watchlists.keys())
@@ -748,14 +732,14 @@ with tab_watchlists:
         st.info(f"The watchlist **{active_wl}** is currently empty. Add setups from the Screener tab or paste symbols above!")
     else:
         # ----------------------------------------------------
-        # VISUAL DRAG & DROP REORDER STUDIO (STREAMLIT-SORTABLES)
+        # 1. VISUAL DRAG & DROP REORDER STUDIO (OPEN BY DEFAULT)
         # ----------------------------------------------------
         if SORTABLES_AVAILABLE and len(current_symbols) > 1:
-            with st.expander("🖐️ Drag & Drop Watchlist Reorder Studio", expanded=False):
-                st.caption("💡 Drag and drop the ticker chips below with your mouse to reorder your watchlist sequence. Changes save immediately!")
+            with st.expander("🖐️ Drag & Drop Watchlist Reorder Studio", expanded=True):
+                st.caption("💡 **How to use:** Streamlit tables cannot be dragged directly. Instead, drag and drop the ticker chips below with your mouse to reorder your watchlist sequence!")
                 drag_sorted_symbols = sort_items(
                     current_symbols, 
-                    direction="horizontal", 
+                    direction="vertical", 
                     key=f"drag_sort_{active_wl}_{st.session_state.wl_sel_counter}"
                 )
                 if drag_sorted_symbols != current_symbols:
@@ -763,7 +747,55 @@ with tab_watchlists:
                     save_watchlists(st.session_state.watchlists)
                     st.rerun()
         elif not SORTABLES_AVAILABLE and len(current_symbols) > 1:
-            st.caption("💡 **Tip:** Want visual mouse Drag-and-Drop reordering? Run `pip install streamlit-sortables` in your terminal!")
+            st.info("💡 **Want Mouse Drag-and-Drop Reordering?** Make sure `streamlit-sortables` is included in your `requirements.txt` file on GitHub!")
+
+        # ----------------------------------------------------
+        # 2. RAPID POSITION MOVER & RANK JUMPER (NO CHECKBOX TRAP)
+        # ----------------------------------------------------
+        if len(current_symbols) > 1:
+            st.markdown("#### ⚡ Rapid Position Mover & Rank Jumper")
+            rm_col1, rm_col2, rm_col3, rm_col4, rm_col5, rm_col6, rm_col7 = st.columns([1.8, 0.8, 0.8, 0.8, 0.8, 1.2, 0.8])
+            with rm_col1:
+                move_target_sym = st.selectbox("Select Ticker:", options=current_symbols, key="rapid_mover_target_select", label_visibility="collapsed")
+            with rm_col2:
+                if st.button("🔝 Top", use_container_width=True):
+                    lst = st.session_state.watchlists[active_wl]
+                    lst.remove(move_target_sym)
+                    lst.insert(0, move_target_sym)
+                    save_watchlists(st.session_state.watchlists)
+                    st.rerun()
+            with rm_col3:
+                if st.button("⬆️ Up", use_container_width=True):
+                    lst = st.session_state.watchlists[active_wl]
+                    idx = lst.index(move_target_sym)
+                    if idx > 0:
+                        lst[idx - 1], lst[idx] = lst[idx], lst[idx - 1]
+                        save_watchlists(st.session_state.watchlists)
+                        st.rerun()
+            with rm_col4:
+                if st.button("⬇️ Down", use_container_width=True):
+                    lst = st.session_state.watchlists[active_wl]
+                    idx = lst.index(move_target_sym)
+                    if idx < len(lst) - 1:
+                        lst[idx + 1], lst[idx] = lst[idx], lst[idx + 1]
+                        save_watchlists(st.session_state.watchlists)
+                        st.rerun()
+            with rm_col5:
+                if st.button("🔻 Bottom", use_container_width=True):
+                    lst = st.session_state.watchlists[active_wl]
+                    lst.remove(move_target_sym)
+                    lst.append(move_target_sym)
+                    save_watchlists(st.session_state.watchlists)
+                    st.rerun()
+            with rm_col6:
+                target_rank = st.number_input("Jump to Rank #", min_value=1, max_value=len(current_symbols), value=1, step=1, label_visibility="collapsed")
+            with rm_col7:
+                if st.button("🎯 Jump", type="primary", use_container_width=True):
+                    lst = st.session_state.watchlists[active_wl]
+                    lst.remove(move_target_sym)
+                    lst.insert(target_rank - 1, move_target_sym)
+                    save_watchlists(st.session_state.watchlists)
+                    st.rerun()
 
         with st.spinner(f"📡 Enriching {len(current_symbols)} Tickers with Live Price & ADR%..."):
             enriched_df = fetch_watchlist_enrichMENT(current_symbols)
@@ -812,19 +844,9 @@ with tab_watchlists:
         sel_symbols = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
         
         # ----------------------------------------------------
-        # WATCHLIST TABLE ACTION BAR (REORDER / REMOVE / PROMOTE)
+        # WATCHLIST TABLE ACTION BAR (REMOVE & PROMOTE)
         # ----------------------------------------------------
-        c_up, c_down, c_rem, c_clr = st.columns([1.0, 1.0, 1.4, 1.0])
-        with c_up:
-            if st.button("⬆️ Move Up", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0):
-                st.session_state.watchlists[active_wl] = move_items_up(st.session_state.watchlists[active_wl], sel_symbols)
-                save_watchlists(st.session_state.watchlists)
-                st.rerun()
-        with c_down:
-            if st.button("⬇️ Move Down", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0):
-                st.session_state.watchlists[active_wl] = move_items_down(st.session_state.watchlists[active_wl], sel_symbols)
-                save_watchlists(st.session_state.watchlists)
-                st.rerun()
+        c_rem, c_clr, c_promo_sel, c_promo_btn = st.columns([1.5, 1.2, 2.0, 1.5])
         with c_rem:
             if st.button(f"🗑️ Remove Selected ({len(sel_symbols)})", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0):
                 for sym in sel_symbols:
@@ -836,14 +858,10 @@ with tab_watchlists:
             if st.button("🧹 Clear Selection", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0, key="clear_wl_sel_btn"):
                 st.session_state.wl_sel_counter += 1
                 st.rerun()
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        c_promo_sel, c_promo_btn = st.columns([2.0, 1.5])
         with c_promo_sel:
-            promo_target = st.selectbox("Promote Selected To Target Watchlist:", options=[name for name in wl_names if name != active_wl] if len(wl_names) > 1 else wl_names, key="promo_target_select")
+            promo_target = st.selectbox("Promote Selected To Target Watchlist:", options=[name for name in wl_names if name != active_wl] if len(wl_names) > 1 else wl_names, key="promo_target_select", label_visibility="collapsed")
         with c_promo_btn:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button(f"➡️ Promote Selected ({len(sel_symbols)}) to '{promo_target}'", type="primary", use_container_width=True, disabled=len(sel_symbols)==0):
+            if st.button(f"➡️ Promote Selected ({len(sel_symbols)})", type="primary", use_container_width=True, disabled=len(sel_symbols)==0):
                 target_list = st.session_state.watchlists[promo_target]
                 cnt = 0
                 for sym in sel_symbols:
