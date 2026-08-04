@@ -6,6 +6,13 @@ import os
 import re
 from tradingview_screener import Query, col
 
+# Attempt to load Drag-and-Drop capability
+try:
+    from streamlit_sortables import sort_items
+    SORTABLES_AVAILABLE = True
+except ImportError:
+    SORTABLES_AVAILABLE = False
+
 # Set Streamlit Page Configuration
 st.set_page_config(
     page_title="India Equities Screener & Watchlist Studio",
@@ -620,10 +627,19 @@ with tab_screener:
             
             selected_rows = parse_table_selection_multi(table_ev_scan, df_display, "TV_Symbol")
             
+            # ----------------------------------------------------
+            # SCAN RESULTS ACTION BAR: ADD TO LIST OR CREATE NEW LIST
+            # ----------------------------------------------------
             st.markdown("---")
-            cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 1.2, 1.0])
+            cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
             with cw1:
-                target_wl = st.selectbox("Select Target Watchlist to Add Setups:", options=list(st.session_state.watchlists.keys()), key="wl_table_target_select")
+                wl_keys = list(st.session_state.watchlists.keys())
+                target_wl = st.selectbox(
+                    "Select Target Watchlist to Add Setups:",
+                    options=wl_keys,
+                    index=wl_keys.index(st.session_state.active_watchlist_name) if st.session_state.active_watchlist_name in wl_keys else 0,
+                    key="wl_table_target_select"
+                )
             with cw2:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button(f"➕ Add Selected ({len(selected_rows)}) to Watchlist", type="primary", use_container_width=True, disabled=len(selected_rows)==0):
@@ -636,10 +652,19 @@ with tab_screener:
                     save_watchlists(st.session_state.watchlists)
                     st.success(f"✅ Successfully added {added_cnt} new stocks to **{target_wl}**!")
             with cw3:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🧹 Clear Selection", type="secondary", use_container_width=True, disabled=len(selected_rows)==0, key="clear_scan_sel_btn"):
-                    st.session_state.scan_sel_counter += 1
-                    st.rerun()
+                st.caption("➕ Create New Watchlist:")
+                with st.form("create_wl_scan_form", clear_on_submit=True):
+                    fc1, fc2 = st.columns([1.7, 1.0])
+                    with fc1:
+                        new_scan_wl = st.text_input("Create New Watchlist", placeholder="e.g., Telecom Breakout", label_visibility="collapsed")
+                    with fc2:
+                        if st.form_submit_button("➕ Create", use_container_width=True):
+                            if new_scan_wl and new_scan_wl not in st.session_state.watchlists:
+                                st.session_state.watchlists[new_scan_wl] = []
+                                st.session_state.active_watchlist_name = new_scan_wl
+                                save_watchlists(st.session_state.watchlists)
+                                st.success(f"Created '{new_scan_wl}'!")
+                                st.rerun()
             with cw4:
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.caption("💡 Check rows above to enable actions.")
@@ -771,7 +796,7 @@ with tab_watchlists:
         st.info(f"The watchlist **{active_wl}** is currently empty. Add setups from the Screener tab or paste symbols above!")
     else:
         # ----------------------------------------------------
-        # PRIORITY MOVER & RANK JUMPER (NO RED BOXES, 100% WORKING)
+        # PRIORITY MOVER & RANK JUMPER (100% WORKING CALLBACKS)
         # ----------------------------------------------------
         if len(current_symbols) > 1:
             st.markdown("---")
