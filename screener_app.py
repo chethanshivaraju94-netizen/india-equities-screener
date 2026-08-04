@@ -6,13 +6,6 @@ import os
 import re
 from tradingview_screener import Query, col
 
-# Attempt to load Drag-and-Drop capability
-try:
-    from streamlit_sortables import sort_items
-    SORTABLES_AVAILABLE = True
-except ImportError:
-    SORTABLES_AVAILABLE = False
-
 # Set Streamlit Page Configuration
 st.set_page_config(
     page_title="India Equities Screener & Watchlist Studio",
@@ -55,6 +48,49 @@ if "scan_sel_counter" not in st.session_state:
     st.session_state.scan_sel_counter = 0
 if "wl_sel_counter" not in st.session_state:
     st.session_state.wl_sel_counter = 0
+
+# ==========================================
+# REORDER CALLBACK FUNCTIONS (100% RELIABLE)
+# ==========================================
+def cb_move_top(wl_name, sym):
+    lst = st.session_state.watchlists.get(wl_name, [])
+    if sym in lst:
+        lst.remove(sym)
+        lst.insert(0, sym)
+        save_watchlists(st.session_state.watchlists)
+
+def cb_move_up(wl_name, sym):
+    lst = st.session_state.watchlists.get(wl_name, [])
+    if sym in lst:
+        idx = lst.index(sym)
+        if idx > 0:
+            lst.pop(idx)
+            lst.insert(idx - 1, sym)
+            save_watchlists(st.session_state.watchlists)
+
+def cb_move_down(wl_name, sym):
+    lst = st.session_state.watchlists.get(wl_name, [])
+    if sym in lst:
+        idx = lst.index(sym)
+        if idx < len(lst) - 1:
+            lst.pop(idx)
+            lst.insert(idx + 1, sym)
+            save_watchlists(st.session_state.watchlists)
+
+def cb_move_bottom(wl_name, sym):
+    lst = st.session_state.watchlists.get(wl_name, [])
+    if sym in lst:
+        lst.remove(sym)
+        lst.append(sym)
+        save_watchlists(st.session_state.watchlists)
+
+def cb_jump_rank(wl_name, sym, target_rank):
+    lst = st.session_state.watchlists.get(wl_name, [])
+    if sym in lst:
+        lst.remove(sym)
+        new_idx = max(0, min(len(lst), target_rank - 1))
+        lst.insert(new_idx, sym)
+        save_watchlists(st.session_state.watchlists)
 
 st.title("📈 India Equities Screener & Watchlist Studio")
 st.markdown("Professional **CAN SLIM Screener**, **Hierarchical Sector Rotation**, and **Multi-Watchlist Studio with Free-Tier TradingView 30-Stock Hot-Swapping**.")
@@ -623,6 +659,9 @@ with tab_screener:
 with tab_watchlists:
     st.subheader("⭐ Multi-Watchlist Studio (Bypasses TV Free Tier 30-Symbol Cap)")
     
+    # ----------------------------------------------------
+    # INLINE RENAME / CREATE / DELETE CONTROLS
+    # ----------------------------------------------------
     col_sel, col_new, col_del = st.columns([2.4, 1.8, 0.8])
     with col_sel:
         wl_names = list(st.session_state.watchlists.keys())
@@ -732,70 +771,26 @@ with tab_watchlists:
         st.info(f"The watchlist **{active_wl}** is currently empty. Add setups from the Screener tab or paste symbols above!")
     else:
         # ----------------------------------------------------
-        # 1. VISUAL DRAG & DROP REORDER STUDIO (OPEN BY DEFAULT)
-        # ----------------------------------------------------
-        if SORTABLES_AVAILABLE and len(current_symbols) > 1:
-            with st.expander("🖐️ Drag & Drop Watchlist Reorder Studio", expanded=True):
-                st.caption("💡 **How to use:** Streamlit tables cannot be dragged directly. Instead, drag and drop the ticker chips below with your mouse to reorder your watchlist sequence!")
-                drag_sorted_symbols = sort_items(
-                    current_symbols, 
-                    direction="vertical", 
-                    key=f"drag_sort_{active_wl}_{st.session_state.wl_sel_counter}"
-                )
-                if drag_sorted_symbols != current_symbols:
-                    st.session_state.watchlists[active_wl] = drag_sorted_symbols
-                    save_watchlists(st.session_state.watchlists)
-                    st.rerun()
-        elif not SORTABLES_AVAILABLE and len(current_symbols) > 1:
-            st.info("💡 **Want Mouse Drag-and-Drop Reordering?** Make sure `streamlit-sortables` is included in your `requirements.txt` file on GitHub!")
-
-        # ----------------------------------------------------
-        # 2. RAPID POSITION MOVER & RANK JUMPER (NO CHECKBOX TRAP)
+        # PRIORITY MOVER & RANK JUMPER (NO RED BOXES, 100% WORKING)
         # ----------------------------------------------------
         if len(current_symbols) > 1:
-            st.markdown("#### ⚡ Rapid Position Mover & Rank Jumper")
-            rm_col1, rm_col2, rm_col3, rm_col4, rm_col5, rm_col6, rm_col7 = st.columns([1.8, 0.8, 0.8, 0.8, 0.8, 1.2, 0.8])
+            st.markdown("---")
+            st.markdown("#### ⚡ Priority Mover & Rank Jumper")
+            rm_col1, rm_col2, rm_col3, rm_col4, rm_col5, rm_col6, rm_col7 = st.columns([2.0, 0.8, 0.8, 0.8, 0.8, 1.1, 0.8])
             with rm_col1:
-                move_target_sym = st.selectbox("Select Ticker:", options=current_symbols, key="rapid_mover_target_select", label_visibility="collapsed")
+                move_target_sym = st.selectbox("Select Ticker to Move:", options=current_symbols, key=f"rapid_mover_sym_{active_wl}", label_visibility="collapsed")
             with rm_col2:
-                if st.button("🔝 Top", use_container_width=True):
-                    lst = st.session_state.watchlists[active_wl]
-                    lst.remove(move_target_sym)
-                    lst.insert(0, move_target_sym)
-                    save_watchlists(st.session_state.watchlists)
-                    st.rerun()
+                st.button("🔝 Top", on_click=cb_move_top, args=(active_wl, move_target_sym), use_container_width=True)
             with rm_col3:
-                if st.button("⬆️ Up", use_container_width=True):
-                    lst = st.session_state.watchlists[active_wl]
-                    idx = lst.index(move_target_sym)
-                    if idx > 0:
-                        lst[idx - 1], lst[idx] = lst[idx], lst[idx - 1]
-                        save_watchlists(st.session_state.watchlists)
-                        st.rerun()
+                st.button("⬆️ Up", on_click=cb_move_up, args=(active_wl, move_target_sym), use_container_width=True)
             with rm_col4:
-                if st.button("⬇️ Down", use_container_width=True):
-                    lst = st.session_state.watchlists[active_wl]
-                    idx = lst.index(move_target_sym)
-                    if idx < len(lst) - 1:
-                        lst[idx + 1], lst[idx] = lst[idx], lst[idx + 1]
-                        save_watchlists(st.session_state.watchlists)
-                        st.rerun()
+                st.button("⬇️ Down", on_click=cb_move_down, args=(active_wl, move_target_sym), use_container_width=True)
             with rm_col5:
-                if st.button("🔻 Bottom", use_container_width=True):
-                    lst = st.session_state.watchlists[active_wl]
-                    lst.remove(move_target_sym)
-                    lst.append(move_target_sym)
-                    save_watchlists(st.session_state.watchlists)
-                    st.rerun()
+                st.button("🔻 Bottom", on_click=cb_move_bottom, args=(active_wl, move_target_sym), use_container_width=True)
             with rm_col6:
-                target_rank = st.number_input("Jump to Rank #", min_value=1, max_value=len(current_symbols), value=1, step=1, label_visibility="collapsed")
+                target_rank = st.number_input("Rank #", min_value=1, max_value=len(current_symbols), value=1, step=1, key=f"rapid_mover_rank_{active_wl}", label_visibility="collapsed")
             with rm_col7:
-                if st.button("🎯 Jump", type="primary", use_container_width=True):
-                    lst = st.session_state.watchlists[active_wl]
-                    lst.remove(move_target_sym)
-                    lst.insert(target_rank - 1, move_target_sym)
-                    save_watchlists(st.session_state.watchlists)
-                    st.rerun()
+                st.button("🎯 Jump", type="primary", on_click=cb_jump_rank, args=(active_wl, move_target_sym, target_rank), use_container_width=True)
 
         with st.spinner(f"📡 Enriching {len(current_symbols)} Tickers with Live Price & ADR%..."):
             enriched_df = fetch_watchlist_enrichMENT(current_symbols)
