@@ -244,10 +244,12 @@ def parse_table_selection_multi(event, df_source, col_name):
 def parse_pasted_tickers(raw_text):
     if not raw_text:
         return []
-    tokens = re.split(r'[,\\n\\t]+', raw_text)
+    tokens = re.split(r'[,\\n\\r\\t;]+', raw_text)
     cleaned = []
     for t in tokens:
         t = t.strip().upper()
+        # Remove any accidental trailing/leading non-alphanumeric chars except ':'
+        t = re.sub(r'[^A-Z0-9:]', '', t)
         if not t:
             continue
         if ":" not in t:
@@ -286,15 +288,16 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
         st.error(f"Error fetching data from TradingView API: {e}")
         return pd.DataFrame()
 
+# Robust bare-name matching to prevent 'None' / blank columns
 def fetch_watchlist_enrichMENT(symbol_list):
     if not symbol_list:
         return pd.DataFrame()
-    bare_names = [s.split(":")[-1] for s in symbol_list]
+    bare_names = [s.split(":")[-1].strip().upper() for s in symbol_list]
     q = (Query()
          .set_markets('india')
          .select('name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector')
          .where(col('name').isin(bare_names))
-         .limit(len(bare_names) + 10)
+         .limit(max(len(bare_names) * 5, 1500))
     )
     try:
         _, df = q.get_scanner_data()
@@ -303,7 +306,9 @@ def fetch_watchlist_enrichMENT(symbol_list):
             df['Close'] = df['close'].round(2)
             df['Change %'] = df['change'].round(2)
             df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
-            df['TV_Symbol'] = df['exchange'] + ":" + df['name']
+            # Ensure 1 unique row per ticker name
+            df = df.drop_duplicates(subset=['name'], keep='first')
+            
             mapped_sectors, mapped_industries = [], []
             for _, row in df.iterrows():
                 sec, ind = map_to_indian_classification(row.get("industry", ""), row.get("sector", ""))
@@ -378,6 +383,18 @@ with st.sidebar.form("filter_form"):
 
 if apply_filters:
     st.session_state.reset_counter += 1
+
+# Active Watchlist Switcher in Sidebar
+st.sidebar.markdown("---")
+st.sidebar.subheader("⭐ Target Active Watchlist")
+wl_names = list(st.session_state.watchlists.keys())
+active_wl = st.sidebar.selectbox(
+    "1-Click Add Target:",
+    options=wl_names,
+    index=wl_names.index(st.session_state.active_watchlist_name) if st.session_state.active_watchlist_name in wl_names else 0,
+    key="wl_sidebar_target_selector"
+)
+st.session_state.active_watchlist_name = active_wl
 
 # ==========================================
 # 4. TOP-LEVEL WORKSPACE TABS
@@ -601,7 +618,10 @@ with tab_screener:
 with tab_watchlists:
     st.subheader("⭐ Multi-Watchlist Studio (Bypasses TV Free Tier 30-Symbol Cap)")
     
-    col_sel, col_new, col_del = st.columns([2.0, 1.8, 1.0])
+    # ----------------------------------------------------
+    # RENAME / CREATE / DELETE CONTROLS
+    # ----------------------------------------------------
+    col_sel, col_new, col_ren, col_del = st.columns([2.0, 1.6, 1.6, 1.0])
     with col_sel:
         wl_names = list(st.session_state.watchlists.keys())
         active_wl = st.selectbox(
@@ -613,18 +633,29 @@ with tab_watchlists:
         st.session_state.active_watchlist_name = active_wl
     with col_new:
         with st.form("create_wl_form", clear_on_submit=True):
-            new_wl_name = st.text_input("Create New Watchlist:", placeholder="e.g., Sector: Capital Goods Build")
-            if st.form_submit_button("➕ Create Watchlist", use_container_width=True):
+            new_wl_name = st.text_input("Create New Watchlist:", placeholder="e.g., Q3 Breakout Watch")
+            if st.form_submit_button("➕ Create", use_container_width=True):
                 if new_wl_name and new_wl_name not in st.session_state.watchlists:
                     st.session_state.watchlists[new_wl_name] = []
                     st.session_state.active_watchlist_name = new_wl_name
                     save_watchlists(st.session_state.watchlists)
                     st.success(f"Created Watchlist: {new_wl_name}")
                     st.rerun()
+    with col_ren:
+        with st.form("rename_wl_form", clear_on_submit=True):
+            rename_wl_input = st.text_input("Rename Active Watchlist:", placeholder="New name...")
+            if st.form_submit_button("✏️ Rename", use_container_width=True):
+                if rename_wl_input and rename_wl_input not in st.session_state.watchlists:
+                    old_name = active_wl
+                    st.session_state.watchlists[rename_wl_input] = st.session_state.watchlists.pop(old_name)
+                    st.session_state.active_watchlist_name = rename_wl_input
+                    save_watchlists(st.session_state.watchlists)
+                    st.success(f"Renamed '{old_name}' to '{rename_wl_input}'!")
+                    st.rerun()
     with col_del:
         st.markdown("<br>", unsafe_allow_html=True)
         if len(wl_names) > 1:
-            if st.button("🗑️ Delete Watchlist", type="secondary", use_container_width=True):
+            if st.button("🗑️ Delete", type="secondary", use_container_width=True):
                 del st.session_state.watchlists[active_wl]
                 save_watchlists(st.session_state.watchlists)
                 st.session_state.active_watchlist_name = list(st.session_state.watchlists.keys())[0]
@@ -697,16 +728,31 @@ with tab_watchlists:
         with st.spinner(f"📡 Enriching {len(current_symbols)} Tickers with Live Price & ADR%..."):
             enriched_df = fetch_watchlist_enrichMENT(current_symbols)
 
-        ordered_df = pd.DataFrame({"TV_Symbol": current_symbols})
+        # Merge strictly on bare symbol name to prevent blank/None columns
+        ordered_df = pd.DataFrame({
+            "TV_Symbol": current_symbols,
+            "name": [s.split(":")[-1].strip().upper() for s in current_symbols]
+        })
+        
         if not enriched_df.empty:
-            merged_df = ordered_df.merge(enriched_df, on="TV_Symbol", how="left")
+            merged_df = ordered_df.merge(enriched_df, on="name", how="left", suffixes=("", "_tv"))
+            # Preserve original symbol string formatting
+            if "TV_Symbol_tv" in merged_df.columns:
+                merged_df["TV_Symbol"] = merged_df["TV_Symbol_tv"].fillna(merged_df["TV_Symbol"])
         else:
             merged_df = ordered_df.copy()
-            for col_name in ['name', 'Close', 'Change %', 'ADR_pct', 'Market Cap (₹ Cr)', 'Sector', 'Industry']:
+            for col_name in ['Close', 'Change %', 'ADR_pct', 'Market Cap (₹ Cr)', 'Sector', 'Industry']:
                 merged_df[col_name] = "N/A"
 
+        # Fill any unresolved gaps cleanly
+        merged_df['Close'] = merged_df.get('Close', pd.Series()).fillna("N/A")
+        merged_df['Change %'] = merged_df.get('Change %', pd.Series()).fillna("N/A")
+        merged_df['ADR %'] = merged_df.get('ADR_pct', pd.Series()).fillna("N/A")
+        merged_df['Market Cap (₹ Cr)'] = merged_df.get('Market Cap (₹ Cr)', pd.Series()).fillna("N/A")
+        merged_df['Sector'] = merged_df.get('Sector', pd.Series()).fillna("Unclassified")
+        merged_df['Industry'] = merged_df.get('Industry', pd.Series()).fillna("Unclassified")
+        
         merged_df['S.No.'] = range(1, len(merged_df) + 1)
-        merged_df['ADR %'] = merged_df.get('ADR_pct', "N/A")
         merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
         wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'Market Cap (₹ Cr)', 'Sector', 'Industry', 'TV_Link']
 
@@ -728,7 +774,6 @@ with tab_watchlists:
 
         sel_to_remove = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
         
-        # ACTIONS: PROMOTE TO ANOTHER WATCHLIST / REMOVE / CLEAR
         col_wl_promo, col_wl_act1, col_wl_act2 = st.columns([2.0, 1.5, 1.0])
         with col_wl_promo:
             promo_target = st.selectbox("Promote Selected To:", options=[name for name in wl_names if name != active_wl] if len(wl_names) > 1 else wl_names, key="promo_target_select")
