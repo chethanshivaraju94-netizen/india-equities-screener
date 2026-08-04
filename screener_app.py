@@ -619,9 +619,9 @@ with tab_watchlists:
     st.subheader("⭐ Multi-Watchlist Studio (Bypasses TV Free Tier 30-Symbol Cap)")
     
     # ----------------------------------------------------
-    # RENAME / CREATE / DELETE CONTROLS
+    # INLINE RENAME / CREATE / DELETE CONTROLS
     # ----------------------------------------------------
-    col_sel, col_new, col_ren, col_del = st.columns([2.0, 1.6, 1.6, 1.0])
+    col_sel, col_new, col_del = st.columns([2.4, 1.8, 0.8])
     with col_sel:
         wl_names = list(st.session_state.watchlists.keys())
         active_wl = st.selectbox(
@@ -631,26 +631,31 @@ with tab_watchlists:
             key="wl_active_selector"
         )
         st.session_state.active_watchlist_name = active_wl
+        
+        # Inline renaming right below the selectbox
+        with st.form("inline_rename_form", clear_on_submit=True):
+            r_col1, r_col2 = st.columns([2.6, 1.0])
+            with r_col1:
+                new_inline_name = st.text_input("✏️ Rename Selected Watchlist:", value=active_wl, label_visibility="collapsed", placeholder="Rename watchlist...")
+            with r_col2:
+                if st.form_submit_button("✏️ Rename", use_container_width=True):
+                    if new_inline_name and new_inline_name != active_wl and new_inline_name not in st.session_state.watchlists:
+                        old_name = active_wl
+                        st.session_state.watchlists[new_inline_name] = st.session_state.watchlists.pop(old_name)
+                        st.session_state.active_watchlist_name = new_inline_name
+                        save_watchlists(st.session_state.watchlists)
+                        st.success(f"Renamed to '{new_inline_name}'!")
+                        st.rerun()
+
     with col_new:
         with st.form("create_wl_form", clear_on_submit=True):
-            new_wl_name = st.text_input("Create New Watchlist:", placeholder="e.g., Q3 Breakout Watch")
-            if st.form_submit_button("➕ Create", use_container_width=True):
+            new_wl_name = st.text_input("Create New Watchlist:", placeholder="e.g., Sector: Capital Goods Build")
+            if st.form_submit_button("➕ Create Watchlist", use_container_width=True):
                 if new_wl_name and new_wl_name not in st.session_state.watchlists:
                     st.session_state.watchlists[new_wl_name] = []
                     st.session_state.active_watchlist_name = new_wl_name
                     save_watchlists(st.session_state.watchlists)
                     st.success(f"Created Watchlist: {new_wl_name}")
-                    st.rerun()
-    with col_ren:
-        with st.form("rename_wl_form", clear_on_submit=True):
-            rename_wl_input = st.text_input("Rename Active Watchlist:", placeholder="New name...")
-            if st.form_submit_button("✏️ Rename", use_container_width=True):
-                if rename_wl_input and rename_wl_input not in st.session_state.watchlists:
-                    old_name = active_wl
-                    st.session_state.watchlists[rename_wl_input] = st.session_state.watchlists.pop(old_name)
-                    st.session_state.active_watchlist_name = rename_wl_input
-                    save_watchlists(st.session_state.watchlists)
-                    st.success(f"Renamed '{old_name}' to '{rename_wl_input}'!")
                     st.rerun()
     with col_del:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -682,9 +687,9 @@ with tab_watchlists:
                 st.code(", ".join(b_list), language="text")
 
     # ----------------------------------------------------
-    # IMPORT TICKERS & PROMOTE / MOVE BETWEEN WATCHLISTS
+    # IMPORT TICKERS & BACKUP AS PLAIN TEXT (.TXT)
     # ----------------------------------------------------
-    with st.expander("📥 Import / Paste Tickers & Backup Local JSON Library", expanded=False):
+    with st.expander("📥 Import / Paste Tickers & Backup Local Text (.TXT) Library", expanded=False):
         ci1, ci2 = st.columns([2, 1])
         with ci1:
             pasted_text = st.text_area("Paste Tickers from TradingView (Comma, Space, or Newline separated):", placeholder="NSE:RELIANCE, BSE:TCS, ZOMATO, TRENT\nNSE:HAL")
@@ -700,16 +705,16 @@ with tab_watchlists:
                 st.success(f"✅ Imported {added} symbols into **{active_wl}**!")
                 st.rerun()
         with ci2:
-            st.markdown("#### 💾 Backup & Restore Disk Library")
-            json_str = json.dumps(st.session_state.watchlists, indent=2)
+            st.markdown("#### 💾 Backup & Restore Disk Library (.TXT)")
+            txt_export_str = json.dumps(st.session_state.watchlists, indent=2)
             st.download_button(
-                label="📥 Download Watchlists (JSON)",
-                data=json_str,
-                file_name="local_watchlists.json",
-                mime="application/json",
+                label="📥 Download Watchlists (.TXT)",
+                data=txt_export_str,
+                file_name="my_india_watchlists.txt",
+                mime="text/plain",
                 use_container_width=True
             )
-            uploaded_file = st.file_uploader("Restore Watchlists (JSON):", type=["json"], label_visibility="collapsed")
+            uploaded_file = st.file_uploader("Restore Watchlists (.TXT):", type=["txt", "json"], label_visibility="collapsed")
             if uploaded_file is not None:
                 try:
                     loaded_wls = json.load(uploaded_file)
@@ -720,7 +725,7 @@ with tab_watchlists:
                         st.success("✅ Watchlists restored successfully!")
                         st.rerun()
                 except Exception as e:
-                    st.error("Invalid JSON format.")
+                    st.error("Invalid file format. Ensure it is a valid backup file.")
 
     if not current_symbols:
         st.info(f"The watchlist **{active_wl}** is currently empty. Add setups from the Screener tab or paste symbols above!")
@@ -736,7 +741,6 @@ with tab_watchlists:
         
         if not enriched_df.empty:
             merged_df = ordered_df.merge(enriched_df, on="name", how="left", suffixes=("", "_tv"))
-            # Preserve original symbol string formatting
             if "TV_Symbol_tv" in merged_df.columns:
                 merged_df["TV_Symbol"] = merged_df["TV_Symbol_tv"].fillna(merged_df["TV_Symbol"])
         else:
