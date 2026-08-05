@@ -485,8 +485,33 @@ def parse_pasted_tickers(raw_text):
     return cleaned
 
 # ==========================================
+# MULTI-ALIAS COALESCING HELPER
+# ==========================================
+def coalesce_columns(df, col_list):
+    res = pd.Series(index=df.index, dtype='float64')
+    for c in col_list:
+        if c in df.columns:
+            s = pd.to_numeric(df[c], errors='coerce')
+            res = res.fillna(s)
+    return res
+
+# ==========================================
 # 2. BACKEND API QUERIES
 # ==========================================
+EPS_Q_ALIASES = [
+    'earnings_per_share_diluted_yoy_growth_fq',
+    'earnings_per_share_fq_yoy_growth',
+    'earnings_per_share_diluted_yoy_growth_quarterly',
+    'basic_eps_yoy_growth_fq'
+]
+
+SALES_Q_ALIASES = [
+    'revenue_yoy_growth_fq',
+    'total_revenue_yoy_growth_fq',
+    'revenue_yoy_growth_quarterly',
+    'sales_yoy_growth_fq'
+]
+
 def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetch, limit_rows):
     if not exchanges:
         return pd.DataFrame()
@@ -497,9 +522,9 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
         tv_vol_col, 'ADR', 'price_52_week_high',
         'price_52_week_low', 'exchange', 'type', 'industry', 'sector',
         'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
-        'earnings_per_share_diluted_yoy_growth_quarterly', 'revenue_yoy_growth_quarterly',
         'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y'
-    ]
+    ] + EPS_Q_ALIASES + SALES_Q_ALIASES
+    
     for c in ma_columns_to_fetch:
         if c not in select_cols:
             select_cols.append(c)
@@ -521,12 +546,15 @@ def fetch_watchlist_enrichMENT(symbol_list):
     if not symbol_list:
         return pd.DataFrame()
     bare_names = [s.split(":")[-1].strip().upper() for s in symbol_list]
+    select_cols = [
+        'name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector',
+        'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
+        'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y'
+    ] + EPS_Q_ALIASES + SALES_Q_ALIASES
+    
     q = (Query()
          .set_markets('india')
-         .select('name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector',
-                 'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
-                 'earnings_per_share_diluted_yoy_growth_quarterly', 'revenue_yoy_growth_quarterly',
-                 'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y')
+         .select(*select_cols)
          .where(col('name').isin(bare_names))
          .limit(max(len(bare_names) * 5, 1500))
     )
@@ -537,8 +565,8 @@ def fetch_watchlist_enrichMENT(symbol_list):
             df['Close'] = df['close'].round(2)
             df['Change %'] = df['change'].round(2)
             df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
-            df['EPS Q YoY %'] = pd.to_numeric(df.get('earnings_per_share_diluted_yoy_growth_quarterly', pd.Series()), errors='coerce').round(2)
-            df['Sales Q YoY %'] = pd.to_numeric(df.get('revenue_yoy_growth_quarterly', pd.Series()), errors='coerce').round(2)
+            df['EPS Q YoY %'] = coalesce_columns(df, EPS_Q_ALIASES).round(2)
+            df['Sales Q YoY %'] = coalesce_columns(df, SALES_Q_ALIASES).round(2)
             
             if 'Perf.W' in df.columns: df['Perf % 1W'] = pd.to_numeric(df['Perf.W'], errors='coerce').round(2)
             if 'Perf.1M' in df.columns: df['Perf % 1M'] = pd.to_numeric(df['Perf.1M'], errors='coerce').round(2)
@@ -1050,10 +1078,10 @@ with tab_screener:
             df = df[df['Index'].apply(matches_index)]
             
         # ----------------------------------------------------
-        # QUARTERLY YOY GROWTH PROCESSING & FILTERING
+        # QUARTERLY YOY GROWTH COALESCING & FILTERING
         # ----------------------------------------------------
-        df['EPS Q YoY %'] = pd.to_numeric(df.get('earnings_per_share_diluted_yoy_growth_quarterly', pd.Series()), errors='coerce').round(2)
-        df['Sales Q YoY %'] = pd.to_numeric(df.get('revenue_yoy_growth_quarterly', pd.Series()), errors='coerce').round(2)
+        df['EPS Q YoY %'] = coalesce_columns(df, EPS_Q_ALIASES).round(2)
+        df['Sales Q YoY %'] = coalesce_columns(df, SALES_Q_ALIASES).round(2)
         
         if en_eps_q:
             if allow_na_growth:
