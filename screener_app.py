@@ -89,8 +89,11 @@ def load_filter_presets():
             "vol_period_days": 60,
             "min_vol_cr": 5.0,
             "ipo_filter": "All Stocks (No IPO Filter)",
+            "en_adr": True,
             "min_adr": 2.5,
+            "en_above_52l": True,
             "min_above_52l": 20,
+            "en_below_52h": True,
             "max_below_52h": 25,
             "selected_perf_labels": ["1 Week", "1 Month", "3 Months", "6 Months"],
             "max_results": 4000
@@ -104,8 +107,11 @@ def load_filter_presets():
             "vol_period_days": 30,
             "min_vol_cr": 10.0,
             "ipo_filter": "All Stocks (No IPO Filter)",
+            "en_adr": True,
             "min_adr": 4.0,
+            "en_above_52l": True,
             "min_above_52l": 30,
+            "en_below_52h": True,
             "max_below_52h": 15,
             "selected_perf_labels": ["1 Week", "1 Month", "3 Months"],
             "max_results": 4000
@@ -119,8 +125,11 @@ def load_filter_presets():
             "vol_period_days": 60,
             "min_vol_cr": 15.0,
             "ipo_filter": "Seasoned: Listed > 1 Year Ago",
+            "en_adr": True,
             "min_adr": 1.5,
+            "en_above_52l": True,
             "min_above_52l": 15,
+            "en_below_52h": True,
             "max_below_52h": 35,
             "selected_perf_labels": ["1 Month", "3 Months", "6 Months", "1 Year"],
             "max_results": 4000
@@ -535,8 +544,11 @@ with col_load:
             st.session_state["f_vol_period"] = p.get("vol_period_days", 60)
             st.session_state["f_min_vol"] = p.get("min_vol_cr", 5.0)
             st.session_state["f_ipo"] = p.get("ipo_filter", "All Stocks (No IPO Filter)")
+            st.session_state["f_en_adr"] = p.get("en_adr", True)
             st.session_state["f_min_adr"] = p.get("min_adr", 2.25)
+            st.session_state["f_en_52l"] = p.get("en_above_52l", True)
             st.session_state["f_min_52l"] = p.get("min_above_52l", 20)
+            st.session_state["f_en_52h"] = p.get("en_below_52h", True)
             st.session_state["f_max_52h"] = p.get("max_below_52h", 30)
             st.session_state["f_perf_labels"] = p.get("selected_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"])
             st.session_state["f_max_res"] = p.get("max_results", 4000)
@@ -555,8 +567,11 @@ with col_update:
                 "vol_period_days": st.session_state.get("f_vol_period", 60),
                 "min_vol_cr": st.session_state.get("f_min_vol", 5.0),
                 "ipo_filter": st.session_state.get("f_ipo", "All Stocks (No IPO Filter)"),
+                "en_adr": st.session_state.get("f_en_adr", True),
                 "min_adr": st.session_state.get("f_min_adr", 2.25),
+                "en_above_52l": st.session_state.get("f_en_52l", True),
                 "min_above_52l": st.session_state.get("f_min_52l", 20),
+                "en_below_52h": st.session_state.get("f_en_52h", True),
                 "max_below_52h": st.session_state.get("f_max_52h", 30),
                 "selected_perf_labels": st.session_state.get("f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]),
                 "max_results": st.session_state.get("f_max_res", 4000)
@@ -586,8 +601,11 @@ with st.sidebar.expander("➕ Save Current Filters as New Preset"):
                     "vol_period_days": st.session_state.get("f_vol_period", 60),
                     "min_vol_cr": st.session_state.get("f_min_vol", 5.0),
                     "ipo_filter": st.session_state.get("f_ipo", "All Stocks (No IPO Filter)"),
+                    "en_adr": st.session_state.get("f_en_adr", True),
                     "min_adr": st.session_state.get("f_min_adr", 2.25),
+                    "en_above_52l": st.session_state.get("f_en_52l", True),
                     "min_above_52l": st.session_state.get("f_min_52l", 20),
+                    "en_below_52h": st.session_state.get("f_en_52h", True),
                     "max_below_52h": st.session_state.get("f_max_52h", 30),
                     "selected_perf_labels": st.session_state.get("f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]),
                     "max_results": st.session_state.get("f_max_res", 4000)
@@ -636,7 +654,6 @@ industry_choice = st.sidebar.multiselect(
     key="f_industries"
 )
 
-# Exhaustive NSE & BSE Indices Library (45+ Indices)
 exhaustive_indices = [
     "NIFTY 50", "NIFTY NEXT 50", "NIFTY 100", "NIFTY 200", "NIFTY 500",
     "NIFTY MIDCAP 50", "NIFTY MIDCAP 100", "NIFTY MIDCAP 150",
@@ -688,6 +705,7 @@ ipo_filter_options = [
     "Recent IPO: Past 3 Months",
     "Recent IPO: Past 6 Months",
     "Recent IPO: Past 1 Year",
+    "Recent IPO: Past 2 Years",
     "Seasoned: Listed > 1 Year Ago",
     "Seasoned: Listed > 3 Years Ago",
     "Seasoned: Listed > 5 Years Ago"
@@ -720,15 +738,31 @@ for i, cfg in enumerate(default_ma_configs, 1):
     col_name = f"{m_type}{m_len}"
     ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
 
+# ----------------------------------------------------
+# 4. VOLATILITY & 52-WEEK RANGE (WITH CHECKBOXES)
+# ----------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("4. Volatility & 52-Week Range")
+
+en_adr = st.sidebar.checkbox(
+    "✅ Filter by Min ADR %",
+    value=st.session_state.get("f_en_adr", True),
+    key="f_en_adr"
+)
 min_adr = st.sidebar.slider(
     "Min ADR % (TradingView Standard):",
     min_value=0.0,
     max_value=10.0,
     value=st.session_state.get("f_min_adr", 2.25),
     step=0.25,
-    key="f_min_adr"
+    key="f_min_adr",
+    disabled=not en_adr
+)
+
+en_52l = st.sidebar.checkbox(
+    "✅ Filter by Min % Above 52-Week Low",
+    value=st.session_state.get("f_en_52l", True),
+    key="f_en_52l"
 )
 min_above_52l = st.sidebar.slider(
     "Min % Above 52-Week Low:",
@@ -736,7 +770,14 @@ min_above_52l = st.sidebar.slider(
     max_value=100,
     value=st.session_state.get("f_min_52l", 20),
     step=5,
-    key="f_min_52l"
+    key="f_min_52l",
+    disabled=not en_52l
+)
+
+en_52h = st.sidebar.checkbox(
+    "✅ Filter by Max % Below 52-Week High",
+    value=st.session_state.get("f_en_52h", True),
+    key="f_en_52h"
 )
 max_below_52h = st.sidebar.slider(
     "Max % Below 52-Week High:",
@@ -744,7 +785,8 @@ max_below_52h = st.sidebar.slider(
     max_value=50,
     value=st.session_state.get("f_max_52h", 30),
     step=5,
-    key="f_max_52h"
+    key="f_max_52h",
+    disabled=not en_52h
 )
 
 st.sidebar.markdown("---")
@@ -883,6 +925,9 @@ with tab_screener:
             elif ipo_filter_choice == "Recent IPO: Past 1 Year":
                 cutoff = now_dt - pd.DateOffset(years=1)
                 df = df[df['IPO_Date_DT'] >= cutoff]
+            elif ipo_filter_choice == "Recent IPO: Past 2 Years":
+                cutoff = now_dt - pd.DateOffset(years=2)
+                df = df[df['IPO_Date_DT'] >= cutoff]
             elif ipo_filter_choice == "Seasoned: Listed > 1 Year Ago":
                 cutoff = now_dt - pd.DateOffset(years=1)
                 df = df[(df['IPO_Date_DT'] < cutoff) | (df['IPO Date'] == "N/A")]
@@ -899,7 +944,8 @@ with tab_screener:
                 df[c] = pd.to_numeric(df[c], errors='coerce')
                 
         df['ADR_pct'] = (df['ADR'] / df['close']) * 100
-        df = df[df['ADR_pct'] >= min_adr]
+        if en_adr:
+            df = df[df['ADR_pct'] >= min_adr]
                 
         for ma in ma_filters:
             c_name = ma["col_name"]
@@ -912,11 +958,13 @@ with tab_screener:
             
         if 'price_52_week_low' in df.columns:
             pct_above_low = ((df['close'] - df['price_52_week_low']) / df['price_52_week_low']) * 100
-            df = df[pct_above_low >= min_above_52l]
+            if en_52l:
+                df = df[pct_above_low >= min_above_52l]
             
         if 'price_52_week_high' in df.columns:
             pct_below_high = ((df['price_52_week_high'] - df['close']) / df['price_52_week_high']) * 100
-            df = df[pct_below_high <= max_below_52h]
+            if en_52h:
+                df = df[pct_below_high <= max_below_52h]
 
         for pf in perf_filters:
             if pf["enabled"] and pf["col_name"] in df.columns:
