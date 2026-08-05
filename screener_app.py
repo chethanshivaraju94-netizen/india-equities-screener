@@ -237,11 +237,11 @@ if "wl_sel_counter" not in st.session_state:
     st.session_state.wl_sel_counter = 0
 
 # ==========================================
-# VISUAL WATCHLIST BADGE HELPER
+# VISUAL WATCHLIST COLOR DOT HELPER
 # ==========================================
-def get_wl_tag(symbol, watchlists_dict):
+def get_wl_dots(symbol, watchlists_dict):
     bare_sym = symbol.split(":")[-1].strip().upper() if ":" in str(symbol) else str(symbol).strip().upper()
-    tags = []
+    dots = []
     for wl_name, sym_list in watchlists_dict.items():
         wl_bare_symbols = [s.split(":")[-1].strip().upper() for s in sym_list]
         if bare_sym in wl_bare_symbols:
@@ -258,8 +258,9 @@ def get_wl_tag(symbol, watchlists_dict):
                 dot = "🔴"
             else:
                 dot = "🟣"
-            tags.append(f"{dot} {wl_name}")
-    return " | ".join(tags) if tags else "--"
+            if dot not in dots:
+                dots.append(dot)
+    return "".join(dots)
 
 # ==========================================
 # REORDER CALLBACK FUNCTIONS
@@ -1279,7 +1280,7 @@ with tab_screener:
                         st.session_state.reset_counter += 1
                         st.rerun()
 
-            df_display['S.No.'] = range(1, len(df_display) + 1)
+            df_display['S.No._num'] = range(1, len(df_display) + 1)
             df_display['Market Cap (₹ Cr)'] = (df_display['market_cap_basic'] / 10_000_000).round(2)
             vol_display_label = f"{vol_period_days}D Close×AvgVol (₹ Cr)"
             df_display[vol_display_label] = (df_display['val_traded_inr'] / 10_000_000).round(2)
@@ -1289,7 +1290,11 @@ with tab_screener:
             df_display['TV_Symbol'] = df_display['exchange'] + ":" + df_display['name']
             df_display['TV_Link'] = "https://www.tradingview.com/chart/?symbol=NSE:" + df_display['name']
             df_display['Screener_Link'] = "https://www.screener.in/company/" + df_display['name'] + "/consolidated/"
-            df_display['WL Tag'] = df_display['TV_Symbol'].apply(lambda s: get_wl_tag(s, st.session_state.watchlists))
+            df_display['WL_Dots'] = df_display['TV_Symbol'].apply(lambda s: get_wl_dots(s, st.session_state.watchlists))
+            df_display['S.No.'] = df_display.apply(
+                lambda r: f"{r['WL_Dots']} {r['S.No._num']}".strip() if r['WL_Dots'] else str(r['S.No._num']),
+                axis=1
+            )
             
             canonical_perf_order = ["Perf % 1W", "Perf % 1M", "Perf % 3M", "Perf % 6M", "Perf % YTD", "Perf % 1Y"]
             for label, (tv_col, disp_label) in perf_options.items():
@@ -1305,7 +1310,7 @@ with tab_screener:
                     active_ma_labels.append(ma["label"])
             
             table_columns = [
-                'S.No.', 'TV_Symbol', 'name', 'WL Tag', 'Close', 'Change %', 
+                'S.No.', 'TV_Symbol', 'name', 'Close', 'Change %', 
                 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %'
             ] + active_perf_labels + active_ma_labels + [
                 vol_display_label, 'Market Cap (₹ Cr)', 
@@ -1313,6 +1318,7 @@ with tab_screener:
             ]
 
             st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
+            st.caption("💡 **Watchlist Color Legend:** 🔵 Post Breakout Monitor | 🟢 Focus List | 🟡 Weekly Focus | 🟠 Scan Bulk | 🔴 Sold Stocks | 🟣 Custom")
             
             sc = st.session_state.scan_sel_counter
             table_ev_scan = st.dataframe(
@@ -1547,14 +1553,19 @@ with tab_watchlists:
         merged_df['Sector'] = merged_df.get('Sector', pd.Series()).fillna("Unclassified")
         merged_df['Industry'] = merged_df.get('Industry', pd.Series()).fillna("Unclassified")
         
-        merged_df['S.No.'] = range(1, len(merged_df) + 1)
+        merged_df['S.No._num'] = range(1, len(merged_df) + 1)
         merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
         merged_df['Screener_Link'] = "https://www.screener.in/company/" + merged_df['name'] + "/consolidated/"
-        merged_df['WL Tag'] = merged_df['TV_Symbol'].apply(lambda s: get_wl_tag(s, st.session_state.watchlists))
+        merged_df['WL_Dots'] = merged_df['TV_Symbol'].apply(lambda s: get_wl_dots(s, st.session_state.watchlists))
+        merged_df['S.No.'] = merged_df.apply(
+            lambda r: f"{r['WL_Dots']} {r['S.No._num']}".strip() if r['WL_Dots'] else str(r['S.No._num']),
+            axis=1
+        )
         
-        wl_cols = ['S.No.', 'TV_Symbol', 'WL Tag', 'Close', 'Change %', 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link']
+        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link']
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
+        st.caption("💡 **Watchlist Color Legend:** 🔵 Post Breakout Monitor | 🟢 Focus List | 🟡 Weekly Focus | 🟠 Scan Bulk | 🔴 Sold Stocks | 🟣 Custom")
 
         wsc = st.session_state.wl_sel_counter
         wl_table_event = st.dataframe(
