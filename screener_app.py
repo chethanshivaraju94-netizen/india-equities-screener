@@ -49,9 +49,11 @@ def load_watchlists():
             pass
 
     return {
-        "⚡ Day Focus": ["NSE:ZOMATO", "NSE:CDSL", "NSE:TITAGARH"],
-        "🔥 Week Focus": ["NSE:JINDWORLD", "NSE:TRENT", "NSE:HAL", "NSE:RECLTD"],
-        "🛠️ Sector: Capital Goods": ["NSE:BHEL", "NSE:ABB", "NSE:SIEMENS", "NSE:CGPOWER"]
+        "Post Breakout Monitor": ["NSE:ZOMATO", "NSE:CDSL", "NSE:TITAGARH"],
+        "Focus List": ["NSE:JINDWORLD", "NSE:TRENT", "NSE:HAL", "NSE:RECLTD"],
+        "Weekly Focus": ["NSE:BHEL", "NSE:ABB", "NSE:SIEMENS", "NSE:CGPOWER"],
+        "Scan Bulk": [],
+        "Sold Stocks": []
     }
 
 def save_watchlists(watchlists_dict):
@@ -233,6 +235,31 @@ if "scan_sel_counter" not in st.session_state:
     st.session_state.scan_sel_counter = 0
 if "wl_sel_counter" not in st.session_state:
     st.session_state.wl_sel_counter = 0
+
+# ==========================================
+# VISUAL WATCHLIST BADGE HELPER
+# ==========================================
+def get_wl_tag(symbol, watchlists_dict):
+    bare_sym = symbol.split(":")[-1].strip().upper() if ":" in str(symbol) else str(symbol).strip().upper()
+    tags = []
+    for wl_name, sym_list in watchlists_dict.items():
+        wl_bare_symbols = [s.split(":")[-1].strip().upper() for s in sym_list]
+        if bare_sym in wl_bare_symbols:
+            name_lower = wl_name.lower()
+            if "post breakout" in name_lower or "breakout" in name_lower:
+                dot = "🔵"
+            elif "weekly" in name_lower:
+                dot = "🟡"
+            elif "focus" in name_lower:
+                dot = "🟢"
+            elif "scan bulk" in name_lower or "bulk" in name_lower:
+                dot = "🟠"
+            elif "sold" in name_lower:
+                dot = "🔴"
+            else:
+                dot = "🟣"
+            tags.append(f"{dot} {wl_name}")
+    return " | ".join(tags) if tags else "--"
 
 # ==========================================
 # REORDER CALLBACK FUNCTIONS
@@ -1262,6 +1289,7 @@ with tab_screener:
             df_display['TV_Symbol'] = df_display['exchange'] + ":" + df_display['name']
             df_display['TV_Link'] = "https://www.tradingview.com/chart/?symbol=NSE:" + df_display['name']
             df_display['Screener_Link'] = "https://www.screener.in/company/" + df_display['name'] + "/consolidated/"
+            df_display['WL Tag'] = df_display['TV_Symbol'].apply(lambda s: get_wl_tag(s, st.session_state.watchlists))
             
             canonical_perf_order = ["Perf % 1W", "Perf % 1M", "Perf % 3M", "Perf % 6M", "Perf % YTD", "Perf % 1Y"]
             for label, (tv_col, disp_label) in perf_options.items():
@@ -1277,7 +1305,7 @@ with tab_screener:
                     active_ma_labels.append(ma["label"])
             
             table_columns = [
-                'S.No.', 'TV_Symbol', 'name', 'Close', 'Change %', 
+                'S.No.', 'TV_Symbol', 'name', 'WL Tag', 'Close', 'Change %', 
                 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %'
             ] + active_perf_labels + active_ma_labels + [
                 vol_display_label, 'Market Cap (₹ Cr)', 
@@ -1522,7 +1550,9 @@ with tab_watchlists:
         merged_df['S.No.'] = range(1, len(merged_df) + 1)
         merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
         merged_df['Screener_Link'] = "https://www.screener.in/company/" + merged_df['name'] + "/consolidated/"
-        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link']
+        merged_df['WL Tag'] = merged_df['TV_Symbol'].apply(lambda s: get_wl_tag(s, st.session_state.watchlists))
+        
+        wl_cols = ['S.No.', 'TV_Symbol', 'WL Tag', 'Close', 'Change %', 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link']
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
 
