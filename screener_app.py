@@ -899,6 +899,7 @@ with tab_screener:
                 return False
             df = df[df['Index'].apply(matches_index)]
             
+        # Robust Date Parsing for TradingView Unix Timestamps & ISO Strings
         if 'recent_ipo_date' in df.columns and 'ipo_date' in df.columns:
             df['IPO_Date_Raw'] = df['recent_ipo_date'].fillna(df['ipo_date'])
         elif 'recent_ipo_date' in df.columns:
@@ -908,7 +909,13 @@ with tab_screener:
         else:
             df['IPO_Date_Raw'] = pd.NaT
 
-        df['IPO_Date_DT'] = pd.to_datetime(df['IPO_Date_Raw'], errors='coerce')
+        def convert_tv_dates(val_series):
+            num_s = pd.to_numeric(val_series, errors='coerce')
+            dt_unix = pd.to_datetime(num_s, unit='s', errors='coerce')
+            dt_iso = pd.to_datetime(val_series, errors='coerce')
+            return dt_unix.fillna(dt_iso)
+
+        df['IPO_Date_DT'] = convert_tv_dates(df['IPO_Date_Raw'])
         df['IPO Date'] = df['IPO_Date_DT'].dt.strftime('%Y-%m-%d').fillna("N/A")
         
         if ipo_filter_choice != "All Stocks (No IPO Filter)":
