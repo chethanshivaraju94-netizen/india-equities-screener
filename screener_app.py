@@ -20,12 +20,13 @@ st.set_page_config(
 # 0. AUTOMATIC GITHUB GIST PERSISTENCE
 # ==========================================
 WATCHLIST_FILE = "local_watchlists.json"
-PRESETS_FILE = "local_filter_presets.json"
 
+# Retrieve Secrets safely (works on Cloud & Local fallback)
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
 GIST_ID = st.secrets.get("GIST_ID", None)
 
 def load_watchlists():
+    # Attempt to load directly from GitHub Gist
     if GITHUB_TOKEN and GIST_ID:
         try:
             headers = {
@@ -35,12 +36,12 @@ def load_watchlists():
             res = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5)
             if res.status_code == 200:
                 gist_data = res.json()
-                if "local_watchlists.json" in gist_data["files"]:
-                    content = gist_data["files"]["local_watchlists.json"]["content"]
-                    return json.loads(content)
+                content = gist_data["files"]["local_watchlists.json"]["content"]
+                return json.loads(content)
         except Exception as e:
             st.warning(f"GitHub Gist load failed, switching to local disk: {e}")
 
+    # Fallback to local disk file if secrets are not set or API fails
     if os.path.exists(WATCHLIST_FILE):
         try:
             with open(WATCHLIST_FILE, "r") as f:
@@ -55,12 +56,14 @@ def load_watchlists():
     }
 
 def save_watchlists(watchlists_dict):
+    # Always save to local memory/disk first
     try:
         with open(WATCHLIST_FILE, "w") as f:
             json.dump(watchlists_dict, f, indent=2)
     except Exception:
         pass
 
+    # Save immediately to GitHub Gist
     if GITHUB_TOKEN and GIST_ID:
         try:
             headers = {
@@ -74,113 +77,16 @@ def save_watchlists(watchlists_dict):
                     }
                 }
             }
-            requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=headers, json=payload, timeout=5)
-        except Exception:
-            pass
-
-def load_filter_presets():
-    default_presets = {
-        "🏆 CAN SLIM & Growth Breakout": {
-            "exchanges": ["NSE", "BSE"],
-            "sectors": [],
-            "industries": [],
-            "indices": [],
-            "min_mcap_cr": 1000,
-            "vol_period_days": 60,
-            "min_vol_cr": 5.0,
-            "ipo_filter": "All Stocks (No IPO Filter)",
-            "min_adr": 2.5,
-            "min_above_52l": 20,
-            "max_below_52h": 25,
-            "selected_perf_labels": ["1 Week", "1 Month", "3 Months", "6 Months"],
-            "max_results": 2500
-        },
-        "⚡ High ADR Momentum (>4%)": {
-            "exchanges": ["NSE", "BSE"],
-            "sectors": [],
-            "industries": [],
-            "indices": [],
-            "min_mcap_cr": 500,
-            "vol_period_days": 30,
-            "min_vol_cr": 10.0,
-            "ipo_filter": "All Stocks (No IPO Filter)",
-            "min_adr": 4.0,
-            "min_above_52l": 30,
-            "max_below_52h": 15,
-            "selected_perf_labels": ["1 Week", "1 Month", "3 Months"],
-            "max_results": 2500
-        },
-        "🛡️ Nifty 500 Core Compounders": {
-            "exchanges": ["NSE"],
-            "sectors": [],
-            "industries": [],
-            "indices": ["NIFTY 500"],
-            "min_mcap_cr": 5000,
-            "vol_period_days": 60,
-            "min_vol_cr": 15.0,
-            "ipo_filter": "Seasoned: Listed > 1 Year Ago",
-            "min_adr": 1.5,
-            "min_above_52l": 15,
-            "max_below_52h": 35,
-            "selected_perf_labels": ["1 Month", "3 Months", "6 Months", "1 Year"],
-            "max_results": 1000
-        }
-    }
-
-    if GITHUB_TOKEN and GIST_ID:
-        try:
-            headers = {
-                "Authorization": f"token {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github.v3+json"
-            }
-            res = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5)
-            if res.status_code == 200:
-                gist_data = res.json()
-                if PRESETS_FILE in gist_data["files"]:
-                    content = gist_data["files"][PRESETS_FILE]["content"]
-                    return json.loads(content)
-        except Exception:
-            pass
-
-    if os.path.exists(PRESETS_FILE):
-        try:
-            with open(PRESETS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-
-    return default_presets
-
-def save_filter_presets(presets_dict):
-    try:
-        with open(PRESETS_FILE, "w") as f:
-            json.dump(presets_dict, f, indent=2)
-    except Exception:
-        pass
-
-    if GITHUB_TOKEN and GIST_ID:
-        try:
-            headers = {
-                "Authorization": f"token {GITHUB_TOKEN}",
-                "Accept": "application/vnd.github.v3+json"
-            }
-            payload = {
-                "files": {
-                    PRESETS_FILE: {
-                        "content": json.dumps(presets_dict, indent=2)
-                    }
-                }
-            }
-            requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=headers, json=payload, timeout=5)
-        except Exception:
-            pass
+            res = requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=headers, json=payload, timeout=5)
+            if res.status_code != 200:
+                st.error(f"Failed to sync to GitHub Gist. Code: {res.status_code}")
+        except Exception as e:
+            st.error(f"Error saving to GitHub Gist: {e}")
 
 if "watchlists" not in st.session_state:
     st.session_state.watchlists = load_watchlists()
 if "active_watchlist_name" not in st.session_state:
     st.session_state.active_watchlist_name = list(st.session_state.watchlists.keys())[0]
-if "filter_presets" not in st.session_state:
-    st.session_state.filter_presets = load_filter_presets()
 if "reset_counter" not in st.session_state:
     st.session_state.reset_counter = 0
 if "scan_sel_counter" not in st.session_state:
@@ -189,7 +95,7 @@ if "wl_sel_counter" not in st.session_state:
     st.session_state.wl_sel_counter = 0
 
 # ==========================================
-# REORDER CALLBACK FUNCTIONS
+# REORDER CALLBACK FUNCTIONS (100% RELIABLE)
 # ==========================================
 def cb_move_top(wl_name, sym):
     lst = st.session_state.watchlists.get(wl_name, [])
@@ -309,6 +215,7 @@ INDIAN_SECTOR_HIERARCHY = {
     ]
 }
 
+# Deterministic Lookup Table for all 84 TradingView India Sector/Industry pairs
 TV_TO_INDIAN_MAP = {
     ('Commercial Services', 'Financial Publishing/Services'): ('Financial Services', 'Capital Markets'),
     ('Commercial Services', 'Miscellaneous Commercial Services'): ('Services', 'Commercial & Professional Services'),
@@ -470,6 +377,7 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
         st.error(f"Error fetching data from TradingView API: {e}")
         return pd.DataFrame()
 
+# Bare-name matching to prevent 'None' / blank columns
 def fetch_watchlist_enrichMENT(symbol_list):
     if not symbol_list:
         return pd.DataFrame()
@@ -511,270 +419,141 @@ def fetch_watchlist_enrichMENT(symbol_list):
         return pd.DataFrame()
 
 # ==========================================
-# 3. SIDEBAR CONTROLS & STRATEGY PRESETS
+# 3. SIDEBAR CONTROLS
 # ==========================================
-st.sidebar.markdown("### 💾 Saved Filter Presets")
-preset_names = list(st.session_state.filter_presets.keys())
-selected_preset_name = st.sidebar.selectbox(
-    "Load Saved Strategy Preset:",
-    options=preset_names,
-    index=0 if preset_names else None,
-    key="sb_preset_selector"
-)
-
-col_load, col_del = st.sidebar.columns([1.8, 1.0])
-with col_load:
-    if st.sidebar.button("⚡ Load Preset", use_container_width=True, type="primary"):
-        if selected_preset_name in st.session_state.filter_presets:
-            p = st.session_state.filter_presets[selected_preset_name]
-            st.session_state["f_exchanges"] = p.get("exchanges", ["NSE", "BSE"])
-            st.session_state["f_sectors"] = p.get("sectors", [])
-            st.session_state["f_industries"] = p.get("industries", [])
-            st.session_state["f_indices"] = p.get("indices", [])
-            st.session_state["f_min_mcap"] = p.get("min_mcap_cr", 1000)
-            st.session_state["f_vol_period"] = p.get("vol_period_days", 60)
-            st.session_state["f_min_vol"] = p.get("min_vol_cr", 5.0)
-            st.session_state["f_ipo"] = p.get("ipo_filter", "All Stocks (No IPO Filter)")
-            st.session_state["f_min_adr"] = p.get("min_adr", 2.25)
-            st.session_state["f_min_52l"] = p.get("min_above_52l", 20)
-            st.session_state["f_max_52h"] = p.get("max_below_52h", 30)
-            st.session_state["f_perf_labels"] = p.get("selected_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"])
-            st.session_state["f_max_res"] = p.get("max_results", 2500)
-            st.success(f"Loaded '{selected_preset_name}'!")
-            st.rerun()
-
-with col_del:
-    if st.sidebar.button("🗑️ Delete", use_container_width=True):
-        if len(preset_names) > 1 and selected_preset_name in st.session_state.filter_presets:
-            del st.session_state.filter_presets[selected_preset_name]
-            save_filter_presets(st.session_state.filter_presets)
-            st.rerun()
-
-with st.sidebar.expander("➕ Save Current Filters as New Preset"):
-    with st.form("save_preset_form", clear_on_submit=True):
-        new_preset_name = st.text_input("Preset Name:", placeholder="e.g., Breakout Momentum")
-        if st.form_submit_button("💾 Save Preset", use_container_width=True):
-            if new_preset_name:
-                st.session_state.filter_presets[new_preset_name] = {
-                    "exchanges": st.session_state.get("f_exchanges", ["NSE", "BSE"]),
-                    "sectors": st.session_state.get("f_sectors", []),
-                    "industries": st.session_state.get("f_industries", []),
-                    "indices": st.session_state.get("f_indices", []),
-                    "min_mcap_cr": st.session_state.get("f_min_mcap", 1000),
-                    "vol_period_days": st.session_state.get("f_vol_period", 60),
-                    "min_vol_cr": st.session_state.get("f_min_vol", 5.0),
-                    "ipo_filter": st.session_state.get("f_ipo", "All Stocks (No IPO Filter)"),
-                    "min_adr": st.session_state.get("f_min_adr", 2.25),
-                    "min_above_52l": st.session_state.get("f_min_52l", 20),
-                    "max_below_52h": st.session_state.get("f_max_52h", 30),
-                    "selected_perf_labels": st.session_state.get("f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]),
-                    "max_results": st.session_state.get("f_max_res", 2500)
-                }
-                save_filter_presets(st.session_state.filter_presets)
-                st.success(f"Saved preset '{new_preset_name}'!")
-                st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.caption("⚡ **Auto-Update Enabled:** Adjusting any filter below updates results instantly.")
-
-# ----------------------------------------------------
-# 1. EXCHANGE & UNIVERSE (INSTANT AUTO-UPDATE)
-# ----------------------------------------------------
-st.sidebar.header("1. Exchange & Universe")
-exchange_choice = st.sidebar.multiselect(
-    "Select Exchanges:",
-    options=["NSE", "BSE"],
-    default=st.session_state.get("f_exchanges", ["NSE", "BSE"]),
-    key="f_exchanges"
-)
-
-st.sidebar.markdown("---")
-st.sidebar.header("🏛️ Official NSE Filters & Indices")
-sector_options = list(INDIAN_SECTOR_HIERARCHY.keys())
-sector_choice = st.sidebar.multiselect(
-    "NSE Sector (22 Economic Sectors):",
-    options=sector_options,
-    default=st.session_state.get("f_sectors", []),
-    key="f_sectors"
-)
-
-if sector_choice:
-    industry_options = []
-    for sec in sector_choice:
-        industry_options.extend(INDIAN_SECTOR_HIERARCHY.get(sec, []))
-    industry_options = sorted(list(set(industry_options)))
-else:
-    all_industries = [ind for inds in INDIAN_SECTOR_HIERARCHY.values() for ind in inds]
-    industry_options = sorted(list(set(all_industries)))
+with st.sidebar.form("filter_form"):
+    st.header("1. Exchange & Universe")
+    exchange_choice = st.multiselect("Select Exchanges:", options=["NSE", "BSE"], default=["NSE", "BSE"])
     
-industry_choice = st.sidebar.multiselect(
-    "NSE Industry (59 Distinct Classifications):",
-    options=industry_options,
-    default=st.session_state.get("f_industries", []),
-    key="f_industries"
-)
+    st.markdown("---")
+    st.header("🏛️ Official NSE Filters & Indices")
+    sector_options = list(INDIAN_SECTOR_HIERARCHY.keys())
+    sector_choice = st.multiselect("NSE Sector (22 Economic Sectors):", options=sector_options, default=[])
+    
+    if sector_choice:
+        industry_options = []
+        for sec in sector_choice:
+            industry_options.extend(INDIAN_SECTOR_HIERARCHY.get(sec, []))
+        industry_options = sorted(list(set(industry_options)))
+    else:
+        all_industries = [ind for inds in INDIAN_SECTOR_HIERARCHY.values() for ind in inds]
+        industry_options = sorted(list(set(all_industries)))
+        
+    industry_choice = st.multiselect("NSE Industry (59 Distinct Classifications):", options=industry_options, default=[])
 
-# Exhaustive NSE & BSE Indices Library (45+ Indices)
-exhaustive_indices = [
-    "NIFTY 50", "NIFTY NEXT 50", "NIFTY 100", "NIFTY 200", "NIFTY 500",
-    "NIFTY MIDCAP 50", "NIFTY MIDCAP 100", "NIFTY MIDCAP 150",
-    "NIFTY SMALLCAP 50", "NIFTY SMALLCAP 100", "NIFTY SMALLCAP 250",
-    "NIFTY MICROCAP 250", "NIFTY TOTAL MARKET", "NIFTY LARGEMIDCAP 250",
-    "NIFTY BANK", "NIFTY AUTO", "NIFTY FINANCIAL SERVICES", "NIFTY FMCG",
-    "NIFTY IT", "NIFTY MEDIA", "NIFTY METAL", "NIFTY PHARMA", "NIFTY PSU BANK",
-    "NIFTY PRIVATE BANK", "NIFTY REALTY", "NIFTY HEALTHCARE", "NIFTY CONSUMER DURABLES",
-    "NIFTY OIL & GAS", "NIFTY COMMODITIES", "NIFTY INDIA CONSUMPTION", "NIFTY CPSE",
-    "NIFTY INFRASTRUCTURE", "NIFTY MNC", "NIFTY PSE", "NIFTY SERVICES SECTOR",
-    "NIFTY ENERGY", "NIFTY HOUSING", "NIFTY INDIA DEFENCE", "NIFTY INDIA DIGITAL",
-    "NIFTY INDIA MANUFACTURING", "NIFTY MOBILITY", "BSE SENSEX", "BSE 100",
-    "BSE 200", "BSE 500"
-]
-index_choice = st.sidebar.multiselect(
-    "Index Membership (45+ Available):",
-    options=exhaustive_indices,
-    default=st.session_state.get("f_indices", []),
-    key="f_indices"
-)
+    # Index Membership Multiselect
+    popular_indices = [
+        "NIFTY 50", "NIFTY NEXT 50", "NIFTY 100", "NIFTY 200", "NIFTY 500",
+        "NIFTY MIDCAP 100", "NIFTY MIDCAP 150", "NIFTY SMALLCAP 100", "NIFTY SMALLCAP 250",
+        "NIFTY BANK", "NIFTY IT", "NIFTY PHARMA", "NIFTY AUTO", "NIFTY FMCG",
+        "NIFTY METAL", "NIFTY ENERGY", "NIFTY REALTY"
+    ]
+    index_choice = st.multiselect("Index Membership:", options=popular_indices, default=[])
 
+    st.markdown("---")
+    st.header("2. Fundamental, Liquidity & IPO Date")
+    min_mcap_cr = st.number_input("Min Market Cap (₹ Crores):", min_value=0, value=1000, step=100)
+    vol_period_days = st.selectbox("Average Volume Period:", options=[10, 30, 60, 90], index=2, format_func=lambda x: f"{x} Days")
+    min_vol_cr = st.number_input(f"Min {vol_period_days}D Avg Rupee Volume (₹ Cr):", min_value=0.0, value=5.0, step=0.5)
+    
+    # IPO Date / Listing Age Selectbox
+    ipo_filter_options = [
+        "All Stocks (No IPO Filter)",
+        "Recent IPO: Past 1 Month",
+        "Recent IPO: Past 3 Months",
+        "Recent IPO: Past 6 Months",
+        "Recent IPO: Past 1 Year",
+        "Seasoned: Listed > 1 Year Ago",
+        "Seasoned: Listed > 3 Years Ago",
+        "Seasoned: Listed > 5 Years Ago"
+    ]
+    ipo_filter_choice = st.selectbox("IPO Date / Listing Age Filter:", options=ipo_filter_options, index=0)
+
+    st.markdown("---")
+    st.header("3. Trend & Moving Averages (5 MAs)")
+    default_ma_configs = [
+        {"en": True,  "type": "EMA", "len": 21},
+        {"en": True,  "type": "SMA", "len": 50},
+        {"en": True,  "type": "SMA", "len": 200},
+        {"en": False, "type": "EMA", "len": 10},
+        {"en": False, "type": "SMA", "len": 150}
+    ]
+    ma_filters = []
+    for i, cfg in enumerate(default_ma_configs, 1):
+        c1, c2, c3 = st.columns([1.8, 1.6, 1.6])
+        with c1:
+            en = st.checkbox(f"MA {i} >", value=cfg["en"], key=f"ma_{i}_en")
+        with c2:
+            m_type = st.selectbox("Type", ["EMA", "SMA"], index=0 if cfg["type"]=="EMA" else 1, key=f"ma_{i}_type", label_visibility="collapsed")
+        with c3:
+            m_len = st.number_input("Len", min_value=1, max_value=500, value=cfg["len"], step=1, key=f"ma_{i}_len", label_visibility="collapsed")
+        col_name = f"{m_type}{m_len}"
+        ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
+
+    st.markdown("---")
+    st.header("4. Volatility & 52-Week Range")
+    min_adr = st.slider("Min ADR % (TradingView Standard):", min_value=0.0, max_value=10.0, value=2.25, step=0.25)
+    min_above_52l = st.slider("Min % Above 52-Week Low:", min_value=0, max_value=100, value=20, step=5)
+    max_below_52h = st.slider("Max % Below 52-Week High:", min_value=0, max_value=50, value=30, step=5)
+
+    st.markdown("---")
+    st.header("5. Performance % (Relative Strength)")
+    perf_options = {
+        "1 Week": ("Perf.W", "Perf % 1W"),
+        "1 Month": ("Perf.1M", "Perf % 1M"),
+        "3 Months": ("Perf.3M", "Perf % 3M"),
+        "6 Months": ("Perf.6M", "Perf % 6M"),
+        "YTD": ("Perf.YTD", "Perf % YTD"),
+        "1 Year": ("Perf.Y", "Perf % 1Y")
+    }
+    selected_perf_labels = st.multiselect(
+        "Display Perf % Columns in Table:",
+        options=list(perf_options.keys()),
+        default=["1 Week", "1 Month", "3 Months", "6 Months"]
+    )
+    
+    st.caption("Optional Minimum Performance % Thresholds:")
+    perf_filters = []
+    p_cols = st.columns(2)
+    for idx, (label, (tv_col, disp_label)) in enumerate(perf_options.items()):
+        with p_cols[idx % 2]:
+            en_p = st.checkbox(f"Min {label} >", value=False, key=f"en_perf_{tv_col}")
+            min_val = st.number_input(
+                f"Min % ({label})",
+                min_value=-100.0,
+                max_value=10000.0,
+                value=0.0,
+                step=5.0,
+                key=f"val_perf_{tv_col}",
+                label_visibility="collapsed"
+            )
+            perf_filters.append({
+                "enabled": en_p,
+                "label": label,
+                "col_name": tv_col,
+                "display_label": disp_label,
+                "min_val": min_val
+            })
+
+    st.markdown("---")
+    st.header("6. Display Settings")
+    max_results = st.slider("Max Results to Fetch:", min_value=500, max_value=3000, value=2500, step=250)
+    apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
+
+if apply_filters:
+    st.session_state.reset_counter += 1
+
+# Active Watchlist Switcher in Sidebar
 st.sidebar.markdown("---")
-st.sidebar.header("2. Fundamental, Liquidity & IPO Date")
-min_mcap_cr = st.sidebar.number_input(
-    "Min Market Cap (₹ Crores):",
-    min_value=0,
-    value=st.session_state.get("f_min_mcap", 1000),
-    step=100,
-    key="f_min_mcap"
+st.sidebar.subheader("⭐ Target Active Watchlist")
+wl_names = list(st.session_state.watchlists.keys())
+active_wl = st.sidebar.selectbox(
+    "1-Click Add Target:",
+    options=wl_names,
+    index=wl_names.index(st.session_state.active_watchlist_name) if st.session_state.active_watchlist_name in wl_names else 0,
+    key="wl_sidebar_target_selector"
 )
-vol_period_days = st.sidebar.selectbox(
-    "Average Volume Period:",
-    options=[10, 30, 60, 90],
-    index=[10, 30, 60, 90].index(st.session_state.get("f_vol_period", 60)),
-    format_func=lambda x: f"{x} Days",
-    key="f_vol_period"
-)
-min_vol_cr = st.sidebar.number_input(
-    f"Min {vol_period_days}D Avg Rupee Volume (₹ Cr):",
-    min_value=0.0,
-    value=st.session_state.get("f_min_vol", 5.0),
-    step=0.5,
-    key="f_min_vol"
-)
-
-ipo_filter_options = [
-    "All Stocks (No IPO Filter)",
-    "Recent IPO: Past 1 Month",
-    "Recent IPO: Past 3 Months",
-    "Recent IPO: Past 6 Months",
-    "Recent IPO: Past 1 Year",
-    "Seasoned: Listed > 1 Year Ago",
-    "Seasoned: Listed > 3 Years Ago",
-    "Seasoned: Listed > 5 Years Ago"
-]
-ipo_filter_choice = st.sidebar.selectbox(
-    "IPO Date / Listing Age Filter:",
-    options=ipo_filter_options,
-    index=ipo_filter_options.index(st.session_state.get("f_ipo", "All Stocks (No IPO Filter)")),
-    key="f_ipo"
-)
-
-st.sidebar.markdown("---")
-st.sidebar.header("3. Trend & Moving Averages (5 MAs)")
-default_ma_configs = [
-    {"en": True,  "type": "EMA", "len": 21},
-    {"en": True,  "type": "SMA", "len": 50},
-    {"en": True,  "type": "SMA", "len": 200},
-    {"en": False, "type": "EMA", "len": 10},
-    {"en": False, "type": "SMA", "len": 150}
-]
-ma_filters = []
-for i, cfg in enumerate(default_ma_configs, 1):
-    c1, c2, c3 = st.sidebar.columns([1.8, 1.6, 1.6])
-    with c1:
-        en = st.checkbox(f"MA {i} >", value=cfg["en"], key=f"ma_{i}_en")
-    with c2:
-        m_type = st.selectbox("Type", ["EMA", "SMA"], index=0 if cfg["type"]=="EMA" else 1, key=f"ma_{i}_type", label_visibility="collapsed")
-    with c3:
-        m_len = st.number_input("Len", min_value=1, max_value=500, value=cfg["len"], step=1, key=f"ma_{i}_len", label_visibility="collapsed")
-    col_name = f"{m_type}{m_len}"
-    ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
-
-st.sidebar.markdown("---")
-st.sidebar.header("4. Volatility & 52-Week Range")
-min_adr = st.sidebar.slider(
-    "Min ADR % (TradingView Standard):",
-    min_value=0.0,
-    max_value=10.0,
-    value=st.session_state.get("f_min_adr", 2.25),
-    step=0.25,
-    key="f_min_adr"
-)
-min_above_52l = st.sidebar.slider(
-    "Min % Above 52-Week Low:",
-    min_value=0,
-    max_value=100,
-    value=st.session_state.get("f_min_52l", 20),
-    step=5,
-    key="f_min_52l"
-)
-max_below_52h = st.sidebar.slider(
-    "Max % Below 52-Week High:",
-    min_value=0,
-    max_value=50,
-    value=st.session_state.get("f_max_52h", 30),
-    step=5,
-    key="f_max_52h"
-)
-
-st.sidebar.markdown("---")
-st.sidebar.header("5. Performance % (Relative Strength)")
-perf_options = {
-    "1 Week": ("Perf.W", "Perf % 1W"),
-    "1 Month": ("Perf.1M", "Perf % 1M"),
-    "3 Months": ("Perf.3M", "Perf % 3M"),
-    "6 Months": ("Perf.6M", "Perf % 6M"),
-    "YTD": ("Perf.YTD", "Perf % YTD"),
-    "1 Year": ("Perf.Y", "Perf % 1Y")
-}
-selected_perf_labels = st.sidebar.multiselect(
-    "Display Perf % Columns in Table:",
-    options=list(perf_options.keys()),
-    default=st.session_state.get("f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]),
-    key="f_perf_labels"
-)
-
-st.sidebar.caption("Optional Minimum Performance % Thresholds:")
-perf_filters = []
-p_cols = st.sidebar.columns(2)
-for idx, (label, (tv_col, disp_label)) in enumerate(perf_options.items()):
-    with p_cols[idx % 2]:
-        en_p = st.checkbox(f"Min {label} >", value=False, key=f"en_perf_{tv_col}")
-        min_val = st.number_input(
-            f"Min % ({label})",
-            min_value=-100.0,
-            max_value=10000.0,
-            value=0.0,
-            step=5.0,
-            key=f"val_perf_{tv_col}",
-            label_visibility="collapsed"
-        )
-        perf_filters.append({
-            "enabled": en_p,
-            "label": label,
-            "col_name": tv_col,
-            "display_label": disp_label,
-            "min_val": min_val
-        })
-
-st.sidebar.markdown("---")
-st.sidebar.header("6. Display Settings")
-max_results = st.sidebar.slider(
-    "Max Results to Fetch:",
-    min_value=500,
-    max_value=3000,
-    value=st.session_state.get("f_max_res", 2500),
-    step=250,
-    key="f_max_res"
-)
+st.session_state.active_watchlist_name = active_wl
 
 # ==========================================
 # 4. TOP-LEVEL WORKSPACE TABS
@@ -791,11 +570,11 @@ with tab_screener:
     ma_cols_to_fetch = list(set([m["col_name"] for m in ma_filters]))
     tv_vol_col = f"average_volume_{vol_period_days}d_calc"
 
-    with st.spinner("⚡ Scanning Indian Equities & Applying Active Filters..."):
+    with st.spinner("⚡ Scanning Indian Equities & Applying Filters..."):
         results_df = fetch_screener_data(exchange_choice, min_mcap_cr, vol_period_days, ma_cols_to_fetch, max_results)
 
     if results_df.empty:
-        st.warning("No stocks matched your criteria. Adjust your sidebar filters or switch to another Preset.")
+        st.warning("No stocks matched your criteria. Click 'Apply Filters' after adjusting your parameters.")
     else:
         df = results_df.copy()
         df = df[df['exchange'].isin(exchange_choice)]
@@ -898,6 +677,7 @@ with tab_screener:
             pct_below_high = ((df['price_52_week_high'] - df['close']) / df['price_52_week_high']) * 100
             df = df[pct_below_high <= max_below_52h]
 
+        # Apply Optional Minimum Performance % Threshold Filters
         for pf in perf_filters:
             if pf["enabled"] and pf["col_name"] in df.columns:
                 df[pf["col_name"]] = pd.to_numeric(df[pf["col_name"]], errors='coerce')
@@ -987,6 +767,7 @@ with tab_screener:
             df_display['TV_Symbol'] = df_display['exchange'] + ":" + df_display['name']
             df_display['TV_Link'] = "https://www.tradingview.com/chart/?symbol=NSE:" + df_display['name']
             
+            # Prepare Performance % display labels
             canonical_perf_order = ["Perf % 1W", "Perf % 1M", "Perf % 3M", "Perf % 6M", "Perf % YTD", "Perf % 1Y"]
             for label, (tv_col, disp_label) in perf_options.items():
                 if tv_col in df_display.columns:
@@ -1082,6 +863,9 @@ with tab_screener:
 with tab_watchlists:
     st.subheader("⭐ Multi-Watchlist Studio (Bypasses TV Free Tier 30-Symbol Cap)")
     
+    # ----------------------------------------------------
+    # INLINE RENAME / CREATE / DELETE CONTROLS
+    # ----------------------------------------------------
     col_sel, col_new, col_del = st.columns([2.4, 1.8, 0.8])
     with col_sel:
         wl_names = list(st.session_state.watchlists.keys())
@@ -1126,6 +910,9 @@ with tab_watchlists:
                 st.session_state.active_watchlist_name = list(st.session_state.watchlists.keys())[0]
                 st.rerun()
 
+    # ----------------------------------------------------
+    # 30-TICKER CHUNKED EXPORTER FOR TRADINGVIEW FREE TIER
+    # ----------------------------------------------------
     current_symbols = st.session_state.watchlists[active_wl]
     
     if current_symbols:
@@ -1143,6 +930,9 @@ with tab_watchlists:
                 st.markdown(f"**Batch {idx+1} ({idx*batch_size + 1}–{idx*batch_size + len(b_list)})**")
                 st.code(", ".join(b_list), language="text")
 
+    # ----------------------------------------------------
+    # IMPORT TICKERS & BACKUP AS PLAIN TEXT (.TXT)
+    # ----------------------------------------------------
     with st.expander("📥 Import / Paste Tickers & Backup Local Text (.TXT) Library", expanded=False):
         ci1, ci2 = st.columns([2, 1])
         with ci1:
@@ -1184,6 +974,9 @@ with tab_watchlists:
     if not current_symbols:
         st.info(f"The watchlist **{active_wl}** is currently empty. Add setups from the Screener tab or paste symbols above!")
     else:
+        # ----------------------------------------------------
+        # PRIORITY MOVER & RANK JUMPER (100% WORKING CALLBACKS)
+        # ----------------------------------------------------
         if len(current_symbols) > 1:
             st.markdown("---")
             st.markdown("#### ⚡ Priority Mover & Rank Jumper")
@@ -1229,6 +1022,7 @@ with tab_watchlists:
         merged_df['Perf % 6M'] = merged_df.get('Perf % 6M', pd.Series()).fillna("N/A")
         merged_df['Market Cap (₹ Cr)'] = merged_df.get('Market Cap (₹ Cr)', pd.Series()).fillna("N/A")
         
+        # Index & IPO Date formatting for Watchlist table
         merged_df['Index'] = merged_df.get('index', pd.Series()).fillna("N/A")
         if 'recent_ipo_date' in merged_df.columns and 'ipo_date' in merged_df.columns:
             merged_df['IPO_Date_Raw'] = merged_df['recent_ipo_date'].fillna(merged_df['ipo_date'])
@@ -1265,6 +1059,9 @@ with tab_watchlists:
 
         sel_symbols = parse_table_selection_multi(wl_table_event, merged_df, "TV_Symbol")
         
+        # ----------------------------------------------------
+        # WATCHLIST TABLE ACTION BAR (REMOVE & PROMOTE)
+        # ----------------------------------------------------
         c_rem, c_clr, c_promo_sel, c_promo_btn = st.columns([1.5, 1.2, 2.0, 1.5])
         with c_rem:
             if st.button(f"🗑️ Remove Selected ({len(sel_symbols)})", type="secondary", use_container_width=True, disabled=len(sel_symbols)==0):
