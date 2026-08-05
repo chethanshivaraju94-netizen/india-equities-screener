@@ -88,6 +88,7 @@ def load_filter_presets():
             "min_mcap_cr": 1000,
             "vol_period_days": 60,
             "min_vol_cr": 5.0,
+            "en_ipo": False,
             "ipo_filter": "All Stocks (No IPO Filter)",
             "en_adr": True,
             "min_adr": 2.5,
@@ -106,6 +107,7 @@ def load_filter_presets():
             "min_mcap_cr": 500,
             "vol_period_days": 30,
             "min_vol_cr": 10.0,
+            "en_ipo": False,
             "ipo_filter": "All Stocks (No IPO Filter)",
             "en_adr": True,
             "min_adr": 4.0,
@@ -124,6 +126,7 @@ def load_filter_presets():
             "min_mcap_cr": 5000,
             "vol_period_days": 60,
             "min_vol_cr": 15.0,
+            "en_ipo": True,
             "ipo_filter": "Seasoned: Listed > 1 Year Ago",
             "en_adr": True,
             "min_adr": 1.5,
@@ -459,7 +462,7 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
         'name', 'close', 'change', 'volume', 'market_cap_basic',
         tv_vol_col, 'ADR', 'price_52_week_high',
         'price_52_week_low', 'exchange', 'type', 'industry', 'sector',
-        'index', 'recent_ipo_date', 'ipo_date',
+        'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
         'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y'
     ]
     for c in ma_columns_to_fetch:
@@ -486,7 +489,7 @@ def fetch_watchlist_enrichMENT(symbol_list):
     q = (Query()
          .set_markets('india')
          .select('name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector',
-                 'index', 'recent_ipo_date', 'ipo_date',
+                 'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
                  'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y')
          .where(col('name').isin(bare_names))
          .limit(max(len(bare_names) * 5, 1500))
@@ -543,6 +546,7 @@ with col_load:
             st.session_state["f_min_mcap"] = p.get("min_mcap_cr", 1000)
             st.session_state["f_vol_period"] = p.get("vol_period_days", 60)
             st.session_state["f_min_vol"] = p.get("min_vol_cr", 5.0)
+            st.session_state["f_en_ipo"] = p.get("en_ipo", False)
             st.session_state["f_ipo"] = p.get("ipo_filter", "All Stocks (No IPO Filter)")
             st.session_state["f_en_adr"] = p.get("en_adr", True)
             st.session_state["f_min_adr"] = p.get("min_adr", 2.25)
@@ -566,6 +570,7 @@ with col_update:
                 "min_mcap_cr": st.session_state.get("f_min_mcap", 1000),
                 "vol_period_days": st.session_state.get("f_vol_period", 60),
                 "min_vol_cr": st.session_state.get("f_min_vol", 5.0),
+                "en_ipo": st.session_state.get("f_en_ipo", False),
                 "ipo_filter": st.session_state.get("f_ipo", "All Stocks (No IPO Filter)"),
                 "en_adr": st.session_state.get("f_en_adr", True),
                 "min_adr": st.session_state.get("f_min_adr", 2.25),
@@ -600,6 +605,7 @@ with st.sidebar.expander("➕ Save Current Filters as New Preset"):
                     "min_mcap_cr": st.session_state.get("f_min_mcap", 1000),
                     "vol_period_days": st.session_state.get("f_vol_period", 60),
                     "min_vol_cr": st.session_state.get("f_min_vol", 5.0),
+                    "en_ipo": st.session_state.get("f_en_ipo", False),
                     "ipo_filter": st.session_state.get("f_ipo", "All Stocks (No IPO Filter)"),
                     "en_adr": st.session_state.get("f_en_adr", True),
                     "min_adr": st.session_state.get("f_min_adr", 2.25),
@@ -699,6 +705,11 @@ min_vol_cr = st.sidebar.number_input(
     key="f_min_vol"
 )
 
+en_ipo = st.sidebar.checkbox(
+    "Filter by IPO Listing Age",
+    value=st.session_state.get("f_en_ipo", False),
+    key="f_en_ipo"
+)
 ipo_filter_options = [
     "All Stocks (No IPO Filter)",
     "Recent IPO: Past 1 Month",
@@ -714,7 +725,8 @@ ipo_filter_choice = st.sidebar.selectbox(
     "IPO Date / Listing Age Filter:",
     options=ipo_filter_options,
     index=ipo_filter_options.index(st.session_state.get("f_ipo", "All Stocks (No IPO Filter)")),
-    key="f_ipo"
+    key="f_ipo",
+    disabled=not en_ipo
 )
 
 st.sidebar.markdown("---")
@@ -739,7 +751,7 @@ for i, cfg in enumerate(default_ma_configs, 1):
     ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
 
 # ----------------------------------------------------
-# 4. VOLATILITY & 52-WEEK RANGE (CLEAN CHECKBOX LABELS)
+# 4. VOLATILITY & 52-WEEK RANGE (CLEAN LABELS)
 # ----------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("4. Volatility & 52-Week Range")
@@ -899,13 +911,12 @@ with tab_screener:
                 return False
             df = df[df['Index'].apply(matches_index)]
             
-        # Robust Date Parsing for TradingView Unix Timestamps & ISO Strings
-        if 'recent_ipo_date' in df.columns and 'ipo_date' in df.columns:
-            df['IPO_Date_Raw'] = df['recent_ipo_date'].fillna(df['ipo_date'])
-        elif 'recent_ipo_date' in df.columns:
-            df['IPO_Date_Raw'] = df['recent_ipo_date']
-        elif 'ipo_date' in df.columns:
-            df['IPO_Date_Raw'] = df['ipo_date']
+        # Robust Date Parsing for TradingView IPO Offer & Listing Fields
+        ipo_cols = [c for c in ['ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date'] if c in df.columns]
+        if ipo_cols:
+            df['IPO_Date_Raw'] = df[ipo_cols[0]]
+            for c in ipo_cols[1:]:
+                df['IPO_Date_Raw'] = df['IPO_Date_Raw'].fillna(df[c])
         else:
             df['IPO_Date_Raw'] = pd.NaT
 
@@ -918,7 +929,7 @@ with tab_screener:
         df['IPO_Date_DT'] = convert_tv_dates(df['IPO_Date_Raw'])
         df['IPO Date'] = df['IPO_Date_DT'].dt.strftime('%Y-%m-%d').fillna("N/A")
         
-        if ipo_filter_choice != "All Stocks (No IPO Filter)":
+        if en_ipo and ipo_filter_choice != "All Stocks (No IPO Filter)":
             now_dt = pd.Timestamp.now()
             if ipo_filter_choice == "Recent IPO: Past 1 Month":
                 cutoff = now_dt - pd.DateOffset(months=1)
