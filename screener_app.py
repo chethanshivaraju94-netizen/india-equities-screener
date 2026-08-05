@@ -1292,7 +1292,7 @@ with tab_screener:
             df_display['Screener_Link'] = "https://www.screener.in/company/" + df_display['name'] + "/consolidated/"
             df_display['WL_Dots'] = df_display['TV_Symbol'].apply(lambda s: get_wl_dots(s, st.session_state.watchlists))
             df_display['S.No.'] = df_display.apply(
-                lambda r: f"{r['WL_Dots']} {r['S.No._num']}".strip() if r['WL_Dots'] else str(r['S.No._num']),
+                lambda r: f"{r['S.No._num']} {r['WL_Dots']}".strip() if r['WL_Dots'] else str(r['S.No._num']),
                 axis=1
             )
             
@@ -1558,7 +1558,7 @@ with tab_watchlists:
         merged_df['Screener_Link'] = "https://www.screener.in/company/" + merged_df['name'] + "/consolidated/"
         merged_df['WL_Dots'] = merged_df['TV_Symbol'].apply(lambda s: get_wl_dots(s, st.session_state.watchlists))
         merged_df['S.No.'] = merged_df.apply(
-            lambda r: f"{r['WL_Dots']} {r['S.No._num']}".strip() if r['WL_Dots'] else str(r['S.No._num']),
+            lambda r: f"{r['S.No._num']} {r['WL_Dots']}".strip() if r['WL_Dots'] else str(r['S.No._num']),
             axis=1
         )
         
