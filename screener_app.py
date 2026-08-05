@@ -79,6 +79,13 @@ def save_watchlists(watchlists_dict):
             pass
 
 def load_filter_presets():
+    default_ma_configs = [
+        {"en": True,  "type": "EMA", "len": 21},
+        {"en": True,  "type": "SMA", "len": 50},
+        {"en": False, "type": "SMA", "len": 200},
+        {"en": False, "type": "EMA", "len": 10},
+        {"en": False, "type": "SMA", "len": 150}
+    ]
     default_presets = {
         "🏆 CAN SLIM & Growth Breakout": {
             "exchanges": ["NSE", "BSE"],
@@ -97,7 +104,9 @@ def load_filter_presets():
             "en_below_52h": True,
             "max_below_52h": 25,
             "selected_perf_labels": ["1 Week", "1 Month", "3 Months", "6 Months"],
-            "max_results": 4000
+            "max_results": 4000,
+            "ma_configs": default_ma_configs,
+            "perf_configs": {c: {"en": False, "val": 0.0} for c in ["Perf.W", "Perf.1M", "Perf.3M", "Perf.6M", "Perf.YTD", "Perf.Y"]}
         },
         "⚡ High ADR Momentum (>4%)": {
             "exchanges": ["NSE", "BSE"],
@@ -116,7 +125,9 @@ def load_filter_presets():
             "en_below_52h": True,
             "max_below_52h": 15,
             "selected_perf_labels": ["1 Week", "1 Month", "3 Months"],
-            "max_results": 4000
+            "max_results": 4000,
+            "ma_configs": default_ma_configs,
+            "perf_configs": {c: {"en": False, "val": 0.0} for c in ["Perf.W", "Perf.1M", "Perf.3M", "Perf.6M", "Perf.YTD", "Perf.Y"]}
         },
         "🛡️ Nifty 500 Core Compounders": {
             "exchanges": ["NSE"],
@@ -135,7 +146,15 @@ def load_filter_presets():
             "en_below_52h": True,
             "max_below_52h": 35,
             "selected_perf_labels": ["1 Month", "3 Months", "6 Months", "1 Year"],
-            "max_results": 4000
+            "max_results": 4000,
+            "ma_configs": [
+                {"en": True,  "type": "EMA", "len": 21},
+                {"en": True,  "type": "SMA", "len": 50},
+                {"en": True,  "type": "SMA", "len": 200},
+                {"en": False, "type": "EMA", "len": 10},
+                {"en": False, "type": "SMA", "len": 150}
+            ],
+            "perf_configs": {c: {"en": False, "val": 0.0} for c in ["Perf.W", "Perf.1M", "Perf.3M", "Perf.6M", "Perf.YTD", "Perf.Y"]}
         }
     }
 
@@ -556,6 +575,19 @@ with col_load:
             st.session_state["f_max_52h"] = p.get("max_below_52h", 30)
             st.session_state["f_perf_labels"] = p.get("selected_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"])
             st.session_state["f_max_res"] = p.get("max_results", 4000)
+            
+            # RESTORE MOVING AVERAGES & PERF % FULLY
+            ma_cfgs = p.get("ma_configs", [])
+            for i, cfg in enumerate(ma_cfgs, 1):
+                st.session_state[f"ma_{i}_en"] = cfg.get("en", False)
+                st.session_state[f"ma_{i}_type"] = cfg.get("type", "SMA")
+                st.session_state[f"ma_{i}_len"] = cfg.get("len", 50)
+                
+            perf_cfgs = p.get("perf_configs", {})
+            for c_key, p_val in perf_cfgs.items():
+                st.session_state[f"en_perf_{c_key}"] = p_val.get("en", False)
+                st.session_state[f"val_perf_{c_key}"] = p_val.get("val", 0.0)
+                
             st.success(f"Loaded '{selected_preset_name}'!")
             st.rerun()
 
@@ -579,7 +611,22 @@ with col_update:
                 "en_below_52h": st.session_state.get("f_en_52h", True),
                 "max_below_52h": st.session_state.get("f_max_52h", 30),
                 "selected_perf_labels": st.session_state.get("f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]),
-                "max_results": st.session_state.get("f_max_res", 4000)
+                "max_results": st.session_state.get("f_max_res", 4000),
+                "ma_configs": [
+                    {
+                        "en": st.session_state.get(f"ma_{i}_en", False),
+                        "type": st.session_state.get(f"ma_{i}_type", "SMA"),
+                        "len": st.session_state.get(f"ma_{i}_len", 50)
+                    }
+                    for i in range(1, 6)
+                ],
+                "perf_configs": {
+                    col: {
+                        "en": st.session_state.get(f"en_perf_{col}", False),
+                        "val": st.session_state.get(f"val_perf_{col}", 0.0)
+                    }
+                    for col in ["Perf.W", "Perf.1M", "Perf.3M", "Perf.6M", "Perf.YTD", "Perf.Y"]
+                }
             }
             save_filter_presets(st.session_state.filter_presets)
             st.success(f"Updated '{selected_preset_name}'!")
@@ -614,7 +661,22 @@ with st.sidebar.expander("➕ Save Current Filters as New Preset"):
                     "en_below_52h": st.session_state.get("f_en_52h", True),
                     "max_below_52h": st.session_state.get("f_max_52h", 30),
                     "selected_perf_labels": st.session_state.get("f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]),
-                    "max_results": st.session_state.get("f_max_res", 4000)
+                    "max_results": st.session_state.get("f_max_res", 4000),
+                    "ma_configs": [
+                        {
+                            "en": st.session_state.get(f"ma_{i}_en", False),
+                            "type": st.session_state.get(f"ma_{i}_type", "SMA"),
+                            "len": st.session_state.get(f"ma_{i}_len", 50)
+                        }
+                        for i in range(1, 6)
+                    ],
+                    "perf_configs": {
+                        col: {
+                            "en": st.session_state.get(f"en_perf_{col}", False),
+                            "val": st.session_state.get(f"val_perf_{col}", 0.0)
+                        }
+                        for col in ["Perf.W", "Perf.1M", "Perf.3M", "Perf.6M", "Perf.YTD", "Perf.Y"]
+                    }
                 }
                 save_filter_presets(st.session_state.filter_presets)
                 st.success(f"Saved preset '{new_preset_name}'!")
@@ -734,7 +796,7 @@ st.sidebar.header("3. Trend & Moving Averages (5 MAs)")
 default_ma_configs = [
     {"en": True,  "type": "EMA", "len": 21},
     {"en": True,  "type": "SMA", "len": 50},
-    {"en": True,  "type": "SMA", "len": 200},
+    {"en": False, "type": "SMA", "len": 200},
     {"en": False, "type": "EMA", "len": 10},
     {"en": False, "type": "SMA", "len": 150}
 ]
@@ -742,16 +804,16 @@ ma_filters = []
 for i, cfg in enumerate(default_ma_configs, 1):
     c1, c2, c3 = st.sidebar.columns([1.8, 1.6, 1.6])
     with c1:
-        en = st.checkbox(f"MA {i} >", value=cfg["en"], key=f"ma_{i}_en")
+        en = st.checkbox(f"MA {i} >", value=st.session_state.get(f"ma_{i}_en", cfg["en"]), key=f"ma_{i}_en")
     with c2:
-        m_type = st.selectbox("Type", ["EMA", "SMA"], index=0 if cfg["type"]=="EMA" else 1, key=f"ma_{i}_type", label_visibility="collapsed")
+        m_type = st.selectbox("Type", ["EMA", "SMA"], index=0 if st.session_state.get(f"ma_{i}_type", cfg["type"])=="EMA" else 1, key=f"ma_{i}_type", label_visibility="collapsed")
     with c3:
-        m_len = st.number_input("Len", min_value=1, max_value=500, value=cfg["len"], step=1, key=f"ma_{i}_len", label_visibility="collapsed")
+        m_len = st.number_input("Len", min_value=1, max_value=500, value=st.session_state.get(f"ma_{i}_len", cfg["len"]), step=1, key=f"ma_{i}_len", label_visibility="collapsed")
     col_name = f"{m_type}{m_len}"
     ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
 
 # ----------------------------------------------------
-# 4. VOLATILITY & 52-WEEK RANGE (CLEAN CHECKBOX LABELS)
+# 4. VOLATILITY & 52-WEEK RANGE (CLEAN LABELS)
 # ----------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("4. Volatility & 52-Week Range")
@@ -823,12 +885,12 @@ perf_filters = []
 p_cols = st.sidebar.columns(2)
 for idx, (label, (tv_col, disp_label)) in enumerate(perf_options.items()):
     with p_cols[idx % 2]:
-        en_p = st.checkbox(f"Min {label} >", value=False, key=f"en_perf_{tv_col}")
+        en_p = st.checkbox(f"Min {label} >", value=st.session_state.get(f"en_perf_{tv_col}", False), key=f"en_perf_{tv_col}")
         min_val = st.number_input(
             f"Min % ({label})",
             min_value=-100.0,
             max_value=10000.0,
-            value=0.0,
+            value=st.session_state.get(f"val_perf_{tv_col}", 0.0),
             step=5.0,
             key=f"val_perf_{tv_col}",
             label_visibility="collapsed"
