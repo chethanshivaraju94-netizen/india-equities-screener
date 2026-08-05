@@ -356,7 +356,8 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
     select_cols = [
         'name', 'close', 'change', 'volume', 'market_cap_basic',
         tv_vol_col, 'ADR', 'price_52_week_high',
-        'price_52_week_low', 'exchange', 'type', 'industry', 'sector'
+        'price_52_week_low', 'exchange', 'type', 'industry', 'sector',
+        'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y'
     ]
     for c in ma_columns_to_fetch:
         if c not in select_cols:
@@ -382,7 +383,8 @@ def fetch_watchlist_enrichMENT(symbol_list):
     bare_names = [s.split(":")[-1].strip().upper() for s in symbol_list]
     q = (Query()
          .set_markets('india')
-         .select('name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector')
+         .select('name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector',
+                 'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y')
          .where(col('name').isin(bare_names))
          .limit(max(len(bare_names) * 5, 1500))
     )
@@ -393,6 +395,14 @@ def fetch_watchlist_enrichMENT(symbol_list):
             df['Close'] = df['close'].round(2)
             df['Change %'] = df['change'].round(2)
             df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
+            
+            if 'Perf.W' in df.columns: df['Perf % 1W'] = pd.to_numeric(df['Perf.W'], errors='coerce').round(2)
+            if 'Perf.1M' in df.columns: df['Perf % 1M'] = pd.to_numeric(df['Perf.1M'], errors='coerce').round(2)
+            if 'Perf.3M' in df.columns: df['Perf % 3M'] = pd.to_numeric(df['Perf.3M'], errors='coerce').round(2)
+            if 'Perf.6M' in df.columns: df['Perf % 6M'] = pd.to_numeric(df['Perf.6M'], errors='coerce').round(2)
+            if 'Perf.YTD' in df.columns: df['Perf % YTD'] = pd.to_numeric(df['Perf.YTD'], errors='coerce').round(2)
+            if 'Perf.Y' in df.columns: df['Perf % 1Y'] = pd.to_numeric(df['Perf.Y'], errors='coerce').round(2)
+            
             df = df.drop_duplicates(subset=['name'], keep='first')
             
             mapped_sectors, mapped_industries = [], []
@@ -462,8 +472,50 @@ with st.sidebar.form("filter_form"):
     min_above_52l = st.slider("Min % Above 52-Week Low:", min_value=0, max_value=100, value=20, step=5)
     max_below_52h = st.slider("Max % Below 52-Week High:", min_value=0, max_value=50, value=30, step=5)
 
+    # ----------------------------------------------------
+    # 5. NEW PERFORMANCE % (RELATIVE STRENGTH) CONTROLS
+    # ----------------------------------------------------
     st.markdown("---")
-    st.header("5. Display Settings")
+    st.header("5. Performance % (Relative Strength)")
+    perf_options = {
+        "1 Week": ("Perf.W", "Perf % 1W"),
+        "1 Month": ("Perf.1M", "Perf % 1M"),
+        "3 Months": ("Perf.3M", "Perf % 3M"),
+        "6 Months": ("Perf.6M", "Perf % 6M"),
+        "YTD": ("Perf.YTD", "Perf % YTD"),
+        "1 Year": ("Perf.Y", "Perf % 1Y")
+    }
+    selected_perf_labels = st.multiselect(
+        "Display Perf % Columns in Table:",
+        options=list(perf_options.keys()),
+        default=["1 Week", "1 Month", "3 Months", "6 Months"]
+    )
+    
+    st.caption("Optional Minimum Performance % Thresholds:")
+    perf_filters = []
+    p_cols = st.columns(2)
+    for idx, (label, (tv_col, disp_label)) in enumerate(perf_options.items()):
+        with p_cols[idx % 2]:
+            en_p = st.checkbox(f"Min {label} >", value=False, key=f"en_perf_{tv_col}")
+            min_val = st.number_input(
+                f"Min % ({label})",
+                min_value=-100.0,
+                max_value=10000.0,
+                value=0.0,
+                step=5.0,
+                key=f"val_perf_{tv_col}",
+                label_visibility="collapsed"
+            )
+            perf_filters.append({
+                "enabled": en_p,
+                "label": label,
+                "col_name": tv_col,
+                "display_label": disp_label,
+                "min_val": min_val
+            })
+
+    st.markdown("---")
+    st.header("6. Display Settings")
     max_results = st.slider("Max Results to Fetch:", min_value=500, max_value=3000, value=2500, step=250)
     apply_filters = st.form_submit_button("🚀 Apply Filters", use_container_width=True, type="primary")
 
@@ -550,6 +602,12 @@ with tab_screener:
             pct_below_high = ((df['price_52_week_high'] - df['close']) / df['price_52_week_high']) * 100
             df = df[pct_below_high <= max_below_52h]
 
+        # Apply Optional Minimum Performance % Threshold Filters
+        for pf in perf_filters:
+            if pf["enabled"] and pf["col_name"] in df.columns:
+                df[pf["col_name"]] = pd.to_numeric(df[pf["col_name"]], errors='coerce')
+                df = df[df[pf["col_name"]] >= pf["min_val"]]
+
         if df.empty:
             st.warning("No stocks passed all criteria. Try broadening your NSE Sector/Industry selections.")
         else:
@@ -634,6 +692,14 @@ with tab_screener:
             df_display['TV_Symbol'] = df_display['exchange'] + ":" + df_display['name']
             df_display['TV_Link'] = "https://www.tradingview.com/chart/?symbol=NSE:" + df_display['name']
             
+            # Prepare Performance % display labels
+            canonical_perf_order = ["Perf % 1W", "Perf % 1M", "Perf % 3M", "Perf % 6M", "Perf % YTD", "Perf % 1Y"]
+            for label, (tv_col, disp_label) in perf_options.items():
+                if tv_col in df_display.columns:
+                    df_display[disp_label] = pd.to_numeric(df_display[tv_col], errors='coerce').round(2)
+            
+            active_perf_labels = [p for p in canonical_perf_order if p in [perf_options[lbl][1] for lbl in selected_perf_labels] and p in df_display.columns]
+
             active_ma_labels = []
             for ma in ma_filters:
                 if ma["enabled"] and ma["col_name"] in df_display.columns:
@@ -643,7 +709,7 @@ with tab_screener:
             table_columns = [
                 'S.No.', 'TV_Symbol', 'name', 'Close', 'Change %', 
                 'ADR %'
-            ] + active_ma_labels + [
+            ] + active_perf_labels + active_ma_labels + [
                 vol_display_label, 'Market Cap (₹ Cr)', 
                 'Sector', 'Industry', 'TV_Link'
             ]
@@ -869,19 +935,23 @@ with tab_watchlists:
                 merged_df["TV_Symbol"] = merged_df["TV_Symbol_tv"].fillna(merged_df["TV_Symbol"])
         else:
             merged_df = ordered_df.copy()
-            for col_name in ['Close', 'Change %', 'ADR_pct', 'Market Cap (₹ Cr)', 'Sector', 'Industry']:
+            for col_name in ['Close', 'Change %', 'ADR_pct', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Sector', 'Industry']:
                 merged_df[col_name] = "N/A"
 
         merged_df['Close'] = merged_df.get('Close', pd.Series()).fillna("N/A")
         merged_df['Change %'] = merged_df.get('Change %', pd.Series()).fillna("N/A")
         merged_df['ADR %'] = merged_df.get('ADR_pct', pd.Series()).fillna("N/A")
+        merged_df['Perf % 1W'] = merged_df.get('Perf % 1W', pd.Series()).fillna("N/A")
+        merged_df['Perf % 1M'] = merged_df.get('Perf % 1M', pd.Series()).fillna("N/A")
+        merged_df['Perf % 3M'] = merged_df.get('Perf % 3M', pd.Series()).fillna("N/A")
+        merged_df['Perf % 6M'] = merged_df.get('Perf % 6M', pd.Series()).fillna("N/A")
         merged_df['Market Cap (₹ Cr)'] = merged_df.get('Market Cap (₹ Cr)', pd.Series()).fillna("N/A")
         merged_df['Sector'] = merged_df.get('Sector', pd.Series()).fillna("Unclassified")
         merged_df['Industry'] = merged_df.get('Industry', pd.Series()).fillna("Unclassified")
         
         merged_df['S.No.'] = range(1, len(merged_df) + 1)
         merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
-        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'Market Cap (₹ Cr)', 'Sector', 'Industry', 'TV_Link']
+        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Sector', 'Industry', 'TV_Link']
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
 
