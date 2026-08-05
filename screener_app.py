@@ -357,6 +357,7 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
         'name', 'close', 'change', 'volume', 'market_cap_basic',
         tv_vol_col, 'ADR', 'price_52_week_high',
         'price_52_week_low', 'exchange', 'type', 'industry', 'sector',
+        'index', 'recent_ipo_date', 'ipo_date',
         'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y'
     ]
     for c in ma_columns_to_fetch:
@@ -384,6 +385,7 @@ def fetch_watchlist_enrichMENT(symbol_list):
     q = (Query()
          .set_markets('india')
          .select('name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector',
+                 'index', 'recent_ipo_date', 'ipo_date',
                  'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y')
          .where(col('name').isin(bare_names))
          .limit(max(len(bare_names) * 5, 1500))
@@ -424,7 +426,7 @@ with st.sidebar.form("filter_form"):
     exchange_choice = st.multiselect("Select Exchanges:", options=["NSE", "BSE"], default=["NSE", "BSE"])
     
     st.markdown("---")
-    st.header("🏛️ Official NSE Filters (22 / 59)")
+    st.header("🏛️ Official NSE Filters & Indices")
     sector_options = list(INDIAN_SECTOR_HIERARCHY.keys())
     sector_choice = st.multiselect("NSE Sector (22 Economic Sectors):", options=sector_options, default=[])
     
@@ -439,11 +441,33 @@ with st.sidebar.form("filter_form"):
         
     industry_choice = st.multiselect("NSE Industry (59 Distinct Classifications):", options=industry_options, default=[])
 
+    # Index Membership Multiselect
+    popular_indices = [
+        "NIFTY 50", "NIFTY NEXT 50", "NIFTY 100", "NIFTY 200", "NIFTY 500",
+        "NIFTY MIDCAP 100", "NIFTY MIDCAP 150", "NIFTY SMALLCAP 100", "NIFTY SMALLCAP 250",
+        "NIFTY BANK", "NIFTY IT", "NIFTY PHARMA", "NIFTY AUTO", "NIFTY FMCG",
+        "NIFTY METAL", "NIFTY ENERGY", "NIFTY REALTY"
+    ]
+    index_choice = st.multiselect("Index Membership:", options=popular_indices, default=[])
+
     st.markdown("---")
-    st.header("2. Fundamental & Liquidity")
+    st.header("2. Fundamental, Liquidity & IPO Date")
     min_mcap_cr = st.number_input("Min Market Cap (₹ Crores):", min_value=0, value=1000, step=100)
     vol_period_days = st.selectbox("Average Volume Period:", options=[10, 30, 60, 90], index=2, format_func=lambda x: f"{x} Days")
     min_vol_cr = st.number_input(f"Min {vol_period_days}D Avg Rupee Volume (₹ Cr):", min_value=0.0, value=5.0, step=0.5)
+    
+    # IPO Date / Listing Age Selectbox
+    ipo_filter_options = [
+        "All Stocks (No IPO Filter)",
+        "Recent IPO: Past 1 Month",
+        "Recent IPO: Past 3 Months",
+        "Recent IPO: Past 6 Months",
+        "Recent IPO: Past 1 Year",
+        "Seasoned: Listed > 1 Year Ago",
+        "Seasoned: Listed > 3 Years Ago",
+        "Seasoned: Listed > 5 Years Ago"
+    ]
+    ipo_filter_choice = st.selectbox("IPO Date / Listing Age Filter:", options=ipo_filter_options, index=0)
 
     st.markdown("---")
     st.header("3. Trend & Moving Averages (5 MAs)")
@@ -472,9 +496,6 @@ with st.sidebar.form("filter_form"):
     min_above_52l = st.slider("Min % Above 52-Week Low:", min_value=0, max_value=100, value=20, step=5)
     max_below_52h = st.slider("Max % Below 52-Week High:", min_value=0, max_value=50, value=30, step=5)
 
-    # ----------------------------------------------------
-    # 5. NEW PERFORMANCE % (RELATIVE STRENGTH) CONTROLS
-    # ----------------------------------------------------
     st.markdown("---")
     st.header("5. Performance % (Relative Strength)")
     perf_options = {
@@ -576,6 +597,60 @@ with tab_screener:
             df = df[df["Sector"].isin(sector_choice)]
         if industry_choice:
             df = df[df["Industry"].isin(industry_choice)]
+            
+        # Index Membership Filtering
+        if 'index' in df.columns:
+            df['Index'] = df['index'].fillna("N/A")
+        else:
+            df['Index'] = "N/A"
+            
+        if index_choice:
+            def matches_index(val):
+                if pd.isna(val) or val == "N/A" or not val:
+                    return False
+                val_str = str(val).upper()
+                for idx_name in index_choice:
+                    if idx_name.upper() in val_str:
+                        return True
+                return False
+            df = df[df['Index'].apply(matches_index)]
+            
+        # IPO Date Filtering & Processing
+        if 'recent_ipo_date' in df.columns and 'ipo_date' in df.columns:
+            df['IPO_Date_Raw'] = df['recent_ipo_date'].fillna(df['ipo_date'])
+        elif 'recent_ipo_date' in df.columns:
+            df['IPO_Date_Raw'] = df['recent_ipo_date']
+        elif 'ipo_date' in df.columns:
+            df['IPO_Date_Raw'] = df['ipo_date']
+        else:
+            df['IPO_Date_Raw'] = pd.NaT
+
+        df['IPO_Date_DT'] = pd.to_datetime(df['IPO_Date_Raw'], errors='coerce')
+        df['IPO Date'] = df['IPO_Date_DT'].dt.strftime('%Y-%m-%d').fillna("N/A")
+        
+        if ipo_filter_choice != "All Stocks (No IPO Filter)":
+            now_dt = pd.Timestamp.now()
+            if ipo_filter_choice == "Recent IPO: Past 1 Month":
+                cutoff = now_dt - pd.DateOffset(months=1)
+                df = df[df['IPO_Date_DT'] >= cutoff]
+            elif ipo_filter_choice == "Recent IPO: Past 3 Months":
+                cutoff = now_dt - pd.DateOffset(months=3)
+                df = df[df['IPO_Date_DT'] >= cutoff]
+            elif ipo_filter_choice == "Recent IPO: Past 6 Months":
+                cutoff = now_dt - pd.DateOffset(months=6)
+                df = df[df['IPO_Date_DT'] >= cutoff]
+            elif ipo_filter_choice == "Recent IPO: Past 1 Year":
+                cutoff = now_dt - pd.DateOffset(years=1)
+                df = df[df['IPO_Date_DT'] >= cutoff]
+            elif ipo_filter_choice == "Seasoned: Listed > 1 Year Ago":
+                cutoff = now_dt - pd.DateOffset(years=1)
+                df = df[(df['IPO_Date_DT'] < cutoff) | (df['IPO Date'] == "N/A")]
+            elif ipo_filter_choice == "Seasoned: Listed > 3 Years Ago":
+                cutoff = now_dt - pd.DateOffset(years=3)
+                df = df[(df['IPO_Date_DT'] < cutoff) | (df['IPO Date'] == "N/A")]
+            elif ipo_filter_choice == "Seasoned: Listed > 5 Years Ago":
+                cutoff = now_dt - pd.DateOffset(years=5)
+                df = df[(df['IPO_Date_DT'] < cutoff) | (df['IPO Date'] == "N/A")]
         
         numeric_cols = ['market_cap_basic', 'close', 'change', 'volume', tv_vol_col, 'ADR', 'price_52_week_high', 'price_52_week_low'] + ma_cols_to_fetch
         for c in numeric_cols:
@@ -711,7 +786,7 @@ with tab_screener:
                 'ADR %'
             ] + active_perf_labels + active_ma_labels + [
                 vol_display_label, 'Market Cap (₹ Cr)', 
-                'Sector', 'Industry', 'TV_Link'
+                'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link'
             ]
 
             st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
@@ -935,7 +1010,7 @@ with tab_watchlists:
                 merged_df["TV_Symbol"] = merged_df["TV_Symbol_tv"].fillna(merged_df["TV_Symbol"])
         else:
             merged_df = ordered_df.copy()
-            for col_name in ['Close', 'Change %', 'ADR_pct', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Sector', 'Industry']:
+            for col_name in ['Close', 'Change %', 'ADR_pct', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry']:
                 merged_df[col_name] = "N/A"
 
         merged_df['Close'] = merged_df.get('Close', pd.Series()).fillna("N/A")
@@ -946,12 +1021,25 @@ with tab_watchlists:
         merged_df['Perf % 3M'] = merged_df.get('Perf % 3M', pd.Series()).fillna("N/A")
         merged_df['Perf % 6M'] = merged_df.get('Perf % 6M', pd.Series()).fillna("N/A")
         merged_df['Market Cap (₹ Cr)'] = merged_df.get('Market Cap (₹ Cr)', pd.Series()).fillna("N/A")
+        
+        # Index & IPO Date formatting for Watchlist table
+        merged_df['Index'] = merged_df.get('index', pd.Series()).fillna("N/A")
+        if 'recent_ipo_date' in merged_df.columns and 'ipo_date' in merged_df.columns:
+            merged_df['IPO_Date_Raw'] = merged_df['recent_ipo_date'].fillna(merged_df['ipo_date'])
+        elif 'recent_ipo_date' in merged_df.columns:
+            merged_df['IPO_Date_Raw'] = merged_df['recent_ipo_date']
+        elif 'ipo_date' in merged_df.columns:
+            merged_df['IPO_Date_Raw'] = merged_df['ipo_date']
+        else:
+            merged_df['IPO_Date_Raw'] = pd.NaT
+            
+        merged_df['IPO Date'] = pd.to_datetime(merged_df['IPO_Date_Raw'], errors='coerce').dt.strftime('%Y-%m-%d').fillna("N/A")
         merged_df['Sector'] = merged_df.get('Sector', pd.Series()).fillna("Unclassified")
         merged_df['Industry'] = merged_df.get('Industry', pd.Series()).fillna("Unclassified")
         
         merged_df['S.No.'] = range(1, len(merged_df) + 1)
         merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
-        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Sector', 'Industry', 'TV_Link']
+        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link']
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
 
