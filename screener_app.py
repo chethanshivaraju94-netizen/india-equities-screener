@@ -93,7 +93,7 @@ def load_filter_presets():
             "min_above_52l": 20,
             "max_below_52h": 25,
             "selected_perf_labels": ["1 Week", "1 Month", "3 Months", "6 Months"],
-            "max_results": 2500
+            "max_results": 4000
         },
         "⚡ High ADR Momentum (>4%)": {
             "exchanges": ["NSE", "BSE"],
@@ -108,7 +108,7 @@ def load_filter_presets():
             "min_above_52l": 30,
             "max_below_52h": 15,
             "selected_perf_labels": ["1 Week", "1 Month", "3 Months"],
-            "max_results": 2500
+            "max_results": 4000
         },
         "🛡️ Nifty 500 Core Compounders": {
             "exchanges": ["NSE"],
@@ -123,7 +123,7 @@ def load_filter_presets():
             "min_above_52l": 15,
             "max_below_52h": 35,
             "selected_perf_labels": ["1 Month", "3 Months", "6 Months", "1 Year"],
-            "max_results": 1000
+            "max_results": 4000
         }
     }
 
@@ -516,15 +516,15 @@ def fetch_watchlist_enrichMENT(symbol_list):
 st.sidebar.markdown("### 💾 Saved Filter Presets")
 preset_names = list(st.session_state.filter_presets.keys())
 selected_preset_name = st.sidebar.selectbox(
-    "Load Saved Strategy Preset:",
+    "Load or Update Strategy Preset:",
     options=preset_names,
     index=0 if preset_names else None,
     key="sb_preset_selector"
 )
 
-col_load, col_del = st.sidebar.columns([1.8, 1.0])
+col_load, col_update, col_del = st.sidebar.columns([1.2, 1.2, 0.9])
 with col_load:
-    if st.sidebar.button("⚡ Load Preset", use_container_width=True, type="primary"):
+    if st.sidebar.button("⚡ Load", use_container_width=True, type="primary"):
         if selected_preset_name in st.session_state.filter_presets:
             p = st.session_state.filter_presets[selected_preset_name]
             st.session_state["f_exchanges"] = p.get("exchanges", ["NSE", "BSE"])
@@ -539,12 +539,34 @@ with col_load:
             st.session_state["f_min_52l"] = p.get("min_above_52l", 20)
             st.session_state["f_max_52h"] = p.get("max_below_52h", 30)
             st.session_state["f_perf_labels"] = p.get("selected_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"])
-            st.session_state["f_max_res"] = p.get("max_results", 2500)
+            st.session_state["f_max_res"] = p.get("max_results", 4000)
             st.success(f"Loaded '{selected_preset_name}'!")
             st.rerun()
 
+with col_update:
+    if st.sidebar.button("🔄 Update", use_container_width=True):
+        if selected_preset_name in st.session_state.filter_presets:
+            st.session_state.filter_presets[selected_preset_name] = {
+                "exchanges": st.session_state.get("f_exchanges", ["NSE", "BSE"]),
+                "sectors": st.session_state.get("f_sectors", []),
+                "industries": st.session_state.get("f_industries", []),
+                "indices": st.session_state.get("f_indices", []),
+                "min_mcap_cr": st.session_state.get("f_min_mcap", 1000),
+                "vol_period_days": st.session_state.get("f_vol_period", 60),
+                "min_vol_cr": st.session_state.get("f_min_vol", 5.0),
+                "ipo_filter": st.session_state.get("f_ipo", "All Stocks (No IPO Filter)"),
+                "min_adr": st.session_state.get("f_min_adr", 2.25),
+                "min_above_52l": st.session_state.get("f_min_52l", 20),
+                "max_below_52h": st.session_state.get("f_max_52h", 30),
+                "selected_perf_labels": st.session_state.get("f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]),
+                "max_results": st.session_state.get("f_max_res", 4000)
+            }
+            save_filter_presets(st.session_state.filter_presets)
+            st.success(f"Updated '{selected_preset_name}'!")
+            st.rerun()
+
 with col_del:
-    if st.sidebar.button("🗑️ Delete", use_container_width=True):
+    if st.sidebar.button("🗑️ Del", use_container_width=True):
         if len(preset_names) > 1 and selected_preset_name in st.session_state.filter_presets:
             del st.session_state.filter_presets[selected_preset_name]
             save_filter_presets(st.session_state.filter_presets)
@@ -568,7 +590,7 @@ with st.sidebar.expander("➕ Save Current Filters as New Preset"):
                     "min_above_52l": st.session_state.get("f_min_52l", 20),
                     "max_below_52h": st.session_state.get("f_max_52h", 30),
                     "selected_perf_labels": st.session_state.get("f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]),
-                    "max_results": st.session_state.get("f_max_res", 2500)
+                    "max_results": st.session_state.get("f_max_res", 4000)
                 }
                 save_filter_presets(st.session_state.filter_presets)
                 st.success(f"Saved preset '{new_preset_name}'!")
@@ -768,10 +790,10 @@ for idx, (label, (tv_col, disp_label)) in enumerate(perf_options.items()):
 st.sidebar.markdown("---")
 st.sidebar.header("6. Display Settings")
 max_results = st.sidebar.slider(
-    "Max Results to Fetch:",
-    min_value=500,
-    max_value=3000,
-    value=st.session_state.get("f_max_res", 2500),
+    "Max Results to Fetch (4000+ Covers Entire Liquid Universe):",
+    min_value=1000,
+    max_value=5000,
+    value=st.session_state.get("f_max_res", 4000),
     step=250,
     key="f_max_res"
 )
@@ -819,7 +841,6 @@ with tab_screener:
         if industry_choice:
             df = df[df["Industry"].isin(industry_choice)]
             
-        # Index Membership Filtering
         if 'index' in df.columns:
             df['Index'] = df['index'].fillna("N/A")
         else:
@@ -836,7 +857,6 @@ with tab_screener:
                 return False
             df = df[df['Index'].apply(matches_index)]
             
-        # IPO Date Filtering & Processing
         if 'recent_ipo_date' in df.columns and 'ipo_date' in df.columns:
             df['IPO_Date_Raw'] = df['recent_ipo_date'].fillna(df['ipo_date'])
         elif 'recent_ipo_date' in df.columns:
@@ -1025,9 +1045,6 @@ with tab_screener:
             
             selected_rows = parse_table_selection_multi(table_ev_scan, df_display, "TV_Symbol")
             
-            # ----------------------------------------------------
-            # SCAN RESULTS ACTION BAR: ADD TO LIST / CREATE NEW LIST
-            # ----------------------------------------------------
             st.markdown("---")
             cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
             with cw1:
