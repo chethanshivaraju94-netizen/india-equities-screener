@@ -97,6 +97,11 @@ def load_filter_presets():
             "min_vol_cr": 5.0,
             "en_ipo": False,
             "ipo_filter": "All Stocks (No IPO Filter)",
+            "en_eps_q": True,
+            "min_eps_q": 15.0,
+            "en_sales_q": True,
+            "min_sales_q": 10.0,
+            "allow_na_growth": True,
             "en_adr": True,
             "min_adr": 2.5,
             "en_above_52l": True,
@@ -118,6 +123,11 @@ def load_filter_presets():
             "min_vol_cr": 10.0,
             "en_ipo": False,
             "ipo_filter": "All Stocks (No IPO Filter)",
+            "en_eps_q": False,
+            "min_eps_q": 0.0,
+            "en_sales_q": False,
+            "min_sales_q": 0.0,
+            "allow_na_growth": True,
             "en_adr": True,
             "min_adr": 4.0,
             "en_above_52l": True,
@@ -139,6 +149,11 @@ def load_filter_presets():
             "min_vol_cr": 15.0,
             "en_ipo": True,
             "ipo_filter": "Seasoned: Listed > 1 Year Ago",
+            "en_eps_q": True,
+            "min_eps_q": 10.0,
+            "en_sales_q": True,
+            "min_sales_q": 10.0,
+            "allow_na_growth": False,
             "en_adr": True,
             "min_adr": 1.5,
             "en_above_52l": True,
@@ -482,6 +497,7 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
         tv_vol_col, 'ADR', 'price_52_week_high',
         'price_52_week_low', 'exchange', 'type', 'industry', 'sector',
         'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
+        'earnings_per_share_diluted_yoy_growth_quarterly', 'revenue_yoy_growth_quarterly',
         'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y'
     ]
     for c in ma_columns_to_fetch:
@@ -509,6 +525,7 @@ def fetch_watchlist_enrichMENT(symbol_list):
          .set_markets('india')
          .select('name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector',
                  'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
+                 'earnings_per_share_diluted_yoy_growth_quarterly', 'revenue_yoy_growth_quarterly',
                  'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y')
          .where(col('name').isin(bare_names))
          .limit(max(len(bare_names) * 5, 1500))
@@ -520,6 +537,8 @@ def fetch_watchlist_enrichMENT(symbol_list):
             df['Close'] = df['close'].round(2)
             df['Change %'] = df['change'].round(2)
             df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
+            df['EPS Q YoY %'] = pd.to_numeric(df.get('earnings_per_share_diluted_yoy_growth_quarterly', pd.Series()), errors='coerce').round(2)
+            df['Sales Q YoY %'] = pd.to_numeric(df.get('revenue_yoy_growth_quarterly', pd.Series()), errors='coerce').round(2)
             
             if 'Perf.W' in df.columns: df['Perf % 1W'] = pd.to_numeric(df['Perf.W'], errors='coerce').round(2)
             if 'Perf.1M' in df.columns: df['Perf % 1M'] = pd.to_numeric(df['Perf.1M'], errors='coerce').round(2)
@@ -567,6 +586,11 @@ with col_load:
             st.session_state["f_min_vol"] = p.get("min_vol_cr", 5.0)
             st.session_state["f_en_ipo"] = p.get("en_ipo", False)
             st.session_state["f_ipo"] = p.get("ipo_filter", "All Stocks (No IPO Filter)")
+            st.session_state["f_en_eps_q"] = p.get("en_eps_q", False)
+            st.session_state["f_min_eps_q"] = p.get("min_eps_q", 10.0)
+            st.session_state["f_en_sales_q"] = p.get("en_sales_q", False)
+            st.session_state["f_min_sales_q"] = p.get("min_sales_q", 10.0)
+            st.session_state["f_allow_na_growth"] = p.get("allow_na_growth", True)
             st.session_state["f_en_adr"] = p.get("en_adr", True)
             st.session_state["f_min_adr"] = p.get("min_adr", 2.25)
             st.session_state["f_en_52l"] = p.get("en_above_52l", True)
@@ -576,7 +600,6 @@ with col_load:
             st.session_state["f_perf_labels"] = p.get("selected_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"])
             st.session_state["f_max_res"] = p.get("max_results", 4000)
             
-            # RESTORE MOVING AVERAGES & PERF % FULLY
             ma_cfgs = p.get("ma_configs", [])
             for i, cfg in enumerate(ma_cfgs, 1):
                 st.session_state[f"ma_{i}_en"] = cfg.get("en", False)
@@ -604,6 +627,11 @@ with col_update:
                 "min_vol_cr": st.session_state.get("f_min_vol", 5.0),
                 "en_ipo": st.session_state.get("f_en_ipo", False),
                 "ipo_filter": st.session_state.get("f_ipo", "All Stocks (No IPO Filter)"),
+                "en_eps_q": st.session_state.get("f_en_eps_q", False),
+                "min_eps_q": st.session_state.get("f_min_eps_q", 10.0),
+                "en_sales_q": st.session_state.get("f_en_sales_q", False),
+                "min_sales_q": st.session_state.get("f_min_sales_q", 10.0),
+                "allow_na_growth": st.session_state.get("f_allow_na_growth", True),
                 "en_adr": st.session_state.get("f_en_adr", True),
                 "min_adr": st.session_state.get("f_min_adr", 2.25),
                 "en_above_52l": st.session_state.get("f_en_52l", True),
@@ -654,6 +682,11 @@ with st.sidebar.expander("➕ Save Current Filters as New Preset"):
                     "min_vol_cr": st.session_state.get("f_min_vol", 5.0),
                     "en_ipo": st.session_state.get("f_en_ipo", False),
                     "ipo_filter": st.session_state.get("f_ipo", "All Stocks (No IPO Filter)"),
+                    "en_eps_q": st.session_state.get("f_en_eps_q", False),
+                    "min_eps_q": st.session_state.get("f_min_eps_q", 10.0),
+                    "en_sales_q": st.session_state.get("f_en_sales_q", False),
+                    "min_sales_q": st.session_state.get("f_min_sales_q", 10.0),
+                    "allow_na_growth": st.session_state.get("f_allow_na_growth", True),
                     "en_adr": st.session_state.get("f_en_adr", True),
                     "min_adr": st.session_state.get("f_min_adr", 2.25),
                     "en_above_52l": st.session_state.get("f_en_52l", True),
@@ -686,7 +719,7 @@ st.sidebar.markdown("---")
 st.sidebar.caption("⚡ **Auto-Update Enabled:** Adjusting any filter below updates results instantly.")
 
 # ----------------------------------------------------
-# 1. EXCHANGE & UNIVERSE (INSTANT AUTO-UPDATE)
+# 1. EXCHANGE & UNIVERSE
 # ----------------------------------------------------
 st.sidebar.header("1. Exchange & Universe")
 exchange_choice = st.sidebar.multiselect(
@@ -791,6 +824,49 @@ ipo_filter_choice = st.sidebar.selectbox(
     disabled=not en_ipo
 )
 
+# ----------------------------------------------------
+# 2B. QUARTERLY YOY FUNDAMENTAL GROWTH
+# ----------------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.header("2B. Quarterly YoY Fundamental Growth")
+
+en_eps_q = st.sidebar.checkbox(
+    "Filter by Min Quarterly YoY EPS Growth %",
+    value=st.session_state.get("f_en_eps_q", False),
+    key="f_en_eps_q"
+)
+min_eps_q = st.sidebar.slider(
+    "Min Quarterly YoY EPS Growth %:",
+    min_value=-50.0,
+    max_value=200.0,
+    value=float(st.session_state.get("f_min_eps_q", 10.0)),
+    step=5.0,
+    key="f_min_eps_q",
+    disabled=not en_eps_q
+)
+
+en_sales_q = st.sidebar.checkbox(
+    "Filter by Min Quarterly YoY Sales Growth %",
+    value=st.session_state.get("f_en_sales_q", False),
+    key="f_en_sales_q"
+)
+min_sales_q = st.sidebar.slider(
+    "Min Quarterly YoY Sales Growth %:",
+    min_value=-50.0,
+    max_value=200.0,
+    value=float(st.session_state.get("f_min_sales_q", 10.0)),
+    step=5.0,
+    key="f_min_sales_q",
+    disabled=not en_sales_q
+)
+
+allow_na_growth = st.sidebar.checkbox(
+    "Pass stocks with missing (N/A) TradingView growth data",
+    value=st.session_state.get("f_allow_na_growth", True),
+    key="f_allow_na_growth",
+    help="TradingView sometimes lags on quarterly data for Indian small-caps. Checking this ensures great technical setups aren't dropped."
+)
+
 st.sidebar.markdown("---")
 st.sidebar.header("3. Trend & Moving Averages (5 MAs)")
 default_ma_configs = [
@@ -813,7 +889,7 @@ for i, cfg in enumerate(default_ma_configs, 1):
     ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
 
 # ----------------------------------------------------
-# 4. VOLATILITY & 52-WEEK RANGE (CLEAN LABELS)
+# 4. VOLATILITY & 52-WEEK RANGE
 # ----------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("4. Volatility & 52-Week Range")
@@ -974,7 +1050,25 @@ with tab_screener:
             df = df[df['Index'].apply(matches_index)]
             
         # ----------------------------------------------------
-        # ROBUST DUAL-PARSER FOR IPO DATES (DESTROYS 1970 BUG)
+        # QUARTERLY YOY GROWTH PROCESSING & FILTERING
+        # ----------------------------------------------------
+        df['EPS Q YoY %'] = pd.to_numeric(df.get('earnings_per_share_diluted_yoy_growth_quarterly', pd.Series()), errors='coerce').round(2)
+        df['Sales Q YoY %'] = pd.to_numeric(df.get('revenue_yoy_growth_quarterly', pd.Series()), errors='coerce').round(2)
+        
+        if en_eps_q:
+            if allow_na_growth:
+                df = df[(df['EPS Q YoY %'] >= min_eps_q) | (df['EPS Q YoY %'].isna())]
+            else:
+                df = df[df['EPS Q YoY %'] >= min_eps_q]
+                
+        if en_sales_q:
+            if allow_na_growth:
+                df = df[(df['Sales Q YoY %'] >= min_sales_q) | (df['Sales Q YoY %'].isna())]
+            else:
+                df = df[df['Sales Q YoY %'] >= min_sales_q]
+
+        # ----------------------------------------------------
+        # ROBUST DUAL-PARSER FOR IPO DATES
         # ----------------------------------------------------
         def clean_tv_date_col(val_series):
             num_s = pd.to_numeric(val_series, errors='coerce')
@@ -1030,9 +1124,6 @@ with tab_screener:
         if en_adr:
             df = df[df['ADR_pct'] >= min_adr]
                 
-        # ----------------------------------------------------
-        # STRICT NUMERIC CASTING FOR MOVING AVERAGES
-        # ----------------------------------------------------
         for ma in ma_filters:
             c_name = ma["col_name"]
             if ma["enabled"] and c_name in df.columns:
@@ -1142,6 +1233,7 @@ with tab_screener:
             df_display['ADR %'] = df_display['ADR_pct'].round(2)
             df_display['TV_Symbol'] = df_display['exchange'] + ":" + df_display['name']
             df_display['TV_Link'] = "https://www.tradingview.com/chart/?symbol=NSE:" + df_display['name']
+            df_display['Screener_Link'] = "https://www.screener.in/company/" + df_display['name'] + "/consolidated/"
             
             canonical_perf_order = ["Perf % 1W", "Perf % 1M", "Perf % 3M", "Perf % 6M", "Perf % YTD", "Perf % 1Y"]
             for label, (tv_col, disp_label) in perf_options.items():
@@ -1158,10 +1250,10 @@ with tab_screener:
             
             table_columns = [
                 'S.No.', 'TV_Symbol', 'name', 'Close', 'Change %', 
-                'ADR %'
+                'ADR %', 'EPS Q YoY %', 'Sales Q YoY %'
             ] + active_perf_labels + active_ma_labels + [
                 vol_display_label, 'Market Cap (₹ Cr)', 
-                'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link'
+                'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link'
             ]
 
             st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
@@ -1174,7 +1266,8 @@ with tab_screener:
                 on_select="rerun",
                 selection_mode="multi-row",
                 column_config={
-                    "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart")
+                    "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart"),
+                    "Screener_Link": st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener")
                 },
                 key=f"scan_table_{rc}_{sc}"
             )
@@ -1370,12 +1463,14 @@ with tab_watchlists:
                 merged_df["TV_Symbol"] = merged_df["TV_Symbol_tv"].fillna(merged_df["TV_Symbol"])
         else:
             merged_df = ordered_df.copy()
-            for col_name in ['Close', 'Change %', 'ADR_pct', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry']:
+            for col_name in ['Close', 'Change %', 'ADR_pct', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry']:
                 merged_df[col_name] = "N/A"
 
         merged_df['Close'] = merged_df.get('Close', pd.Series()).fillna("N/A")
         merged_df['Change %'] = merged_df.get('Change %', pd.Series()).fillna("N/A")
         merged_df['ADR %'] = merged_df.get('ADR_pct', pd.Series()).fillna("N/A")
+        merged_df['EPS Q YoY %'] = merged_df.get('EPS Q YoY %', pd.Series()).fillna("N/A")
+        merged_df['Sales Q YoY %'] = merged_df.get('Sales Q YoY %', pd.Series()).fillna("N/A")
         merged_df['Perf % 1W'] = merged_df.get('Perf % 1W', pd.Series()).fillna("N/A")
         merged_df['Perf % 1M'] = merged_df.get('Perf % 1M', pd.Series()).fillna("N/A")
         merged_df['Perf % 3M'] = merged_df.get('Perf % 3M', pd.Series()).fillna("N/A")
@@ -1398,7 +1493,8 @@ with tab_watchlists:
         
         merged_df['S.No.'] = range(1, len(merged_df) + 1)
         merged_df['TV_Link'] = "https://www.tradingview.com/chart/?symbol=" + merged_df['TV_Symbol']
-        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link']
+        merged_df['Screener_Link'] = "https://www.screener.in/company/" + merged_df['name'] + "/consolidated/"
+        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link']
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
 
@@ -1411,7 +1507,8 @@ with tab_watchlists:
             on_select="rerun",
             selection_mode="multi-row",
             column_config={
-                "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart")
+                "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart"),
+                "Screener_Link": st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener")
             },
             key=f"wl_manage_table_{wsc}"
         )
