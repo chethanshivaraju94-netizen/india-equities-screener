@@ -739,13 +739,13 @@ for i, cfg in enumerate(default_ma_configs, 1):
     ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
 
 # ----------------------------------------------------
-# 4. VOLATILITY & 52-WEEK RANGE (WITH CHECKBOXES)
+# 4. VOLATILITY & 52-WEEK RANGE (CLEAN CHECKBOX LABELS)
 # ----------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("4. Volatility & 52-Week Range")
 
 en_adr = st.sidebar.checkbox(
-    "✅ Filter by Min ADR %",
+    "Filter by Min ADR %",
     value=st.session_state.get("f_en_adr", True),
     key="f_en_adr"
 )
@@ -760,7 +760,7 @@ min_adr = st.sidebar.slider(
 )
 
 en_52l = st.sidebar.checkbox(
-    "✅ Filter by Min % Above 52-Week Low",
+    "Filter by Min % Above 52-Week Low",
     value=st.session_state.get("f_en_52l", True),
     key="f_en_52l"
 )
@@ -775,7 +775,7 @@ min_above_52l = st.sidebar.slider(
 )
 
 en_52h = st.sidebar.checkbox(
-    "✅ Filter by Max % Below 52-Week High",
+    "Filter by Max % Below 52-Week High",
     value=st.session_state.get("f_en_52h", True),
     key="f_en_52h"
 )
