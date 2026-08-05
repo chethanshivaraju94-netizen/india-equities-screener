@@ -751,7 +751,7 @@ for i, cfg in enumerate(default_ma_configs, 1):
     ma_filters.append({"enabled": en, "type": m_type, "length": m_len, "col_name": col_name, "label": f"{m_type} {m_len}"})
 
 # ----------------------------------------------------
-# 4. VOLATILITY & 52-WEEK RANGE (CLEAN LABELS)
+# 4. VOLATILITY & 52-WEEK RANGE (CLEAN CHECKBOX LABELS)
 # ----------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("4. Volatility & 52-Week Range")
@@ -911,22 +911,25 @@ with tab_screener:
                 return False
             df = df[df['Index'].apply(matches_index)]
             
-        # Robust Date Parsing for TradingView IPO Offer & Listing Fields
+        # ----------------------------------------------------
+        # ROBUST DUAL-PARSER FOR IPO DATES (DESTROYS 1970 BUG)
+        # ----------------------------------------------------
+        def clean_tv_date_col(val_series):
+            num_s = pd.to_numeric(val_series, errors='coerce')
+            dt_unix = pd.to_datetime(num_s.where(num_s > 0), unit='s', errors='coerce')
+            dt_iso = pd.to_datetime(val_series, errors='coerce')
+            dt_combined = dt_unix.fillna(dt_iso)
+            return dt_combined.where(dt_combined >= pd.Timestamp('1980-01-01'), pd.NaT)
+
         ipo_cols = [c for c in ['ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date'] if c in df.columns]
         if ipo_cols:
-            df['IPO_Date_Raw'] = df[ipo_cols[0]]
-            for c in ipo_cols[1:]:
-                df['IPO_Date_Raw'] = df['IPO_Date_Raw'].fillna(df[c])
+            clean_dt_df = pd.DataFrame(index=df.index)
+            for c in ipo_cols:
+                clean_dt_df[c] = clean_tv_date_col(df[c])
+            df['IPO_Date_DT'] = clean_dt_df.max(axis=1)
         else:
-            df['IPO_Date_Raw'] = pd.NaT
+            df['IPO_Date_DT'] = pd.NaT
 
-        def convert_tv_dates(val_series):
-            num_s = pd.to_numeric(val_series, errors='coerce')
-            dt_unix = pd.to_datetime(num_s, unit='s', errors='coerce')
-            dt_iso = pd.to_datetime(val_series, errors='coerce')
-            return dt_unix.fillna(dt_iso)
-
-        df['IPO_Date_DT'] = convert_tv_dates(df['IPO_Date_Raw'])
         df['IPO Date'] = df['IPO_Date_DT'].dt.strftime('%Y-%m-%d').fillna("N/A")
         
         if en_ipo and ipo_filter_choice != "All Stocks (No IPO Filter)":
@@ -965,9 +968,14 @@ with tab_screener:
         if en_adr:
             df = df[df['ADR_pct'] >= min_adr]
                 
+        # ----------------------------------------------------
+        # STRICT NUMERIC CASTING FOR MOVING AVERAGES
+        # ----------------------------------------------------
         for ma in ma_filters:
             c_name = ma["col_name"]
             if ma["enabled"] and c_name in df.columns:
+                df['close'] = pd.to_numeric(df['close'], errors='coerce')
+                df[c_name] = pd.to_numeric(df[c_name], errors='coerce')
                 df = df[df['close'] > df[c_name]]
             
         if tv_vol_col in df.columns:
