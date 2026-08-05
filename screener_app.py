@@ -4,16 +4,12 @@ import plotly.express as px
 import json
 import os
 import re
+import requests
 from tradingview_screener import Query, col
 
-# Attempt to load Drag-and-Drop capability
-try:
-    from streamlit_sortables import sort_items
-    SORTABLES_AVAILABLE = True
-except ImportError:
-    SORTABLES_AVAILABLE = False
-
-# Set Streamlit Page Configuration
+# ==========================================
+# PAGE CONFIGURATION
+# ==========================================
 st.set_page_config(
     page_title="India Equities Screener & Watchlist Studio",
     page_icon="📈",
@@ -21,17 +17,38 @@ st.set_page_config(
 )
 
 # ==========================================
-# 0. LOCAL DISK PERSISTENCE FOR WATCHLISTS
+# 0. AUTOMATIC GITHUB GIST PERSISTENCE
 # ==========================================
 WATCHLIST_FILE = "local_watchlists.json"
 
+# Retrieve Secrets safely (works on Cloud & Local fallback)
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
+GIST_ID = st.secrets.get("GIST_ID", None)
+
 def load_watchlists():
+    # Attempt to load directly from GitHub Gist
+    if GITHUB_TOKEN and GIST_ID:
+        try:
+            headers = {
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+            res = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5)
+            if res.status_code == 200:
+                gist_data = res.json()
+                content = gist_data["files"]["local_watchlists.json"]["content"]
+                return json.loads(content)
+        except Exception as e:
+            st.warning(f"GitHub Gist load failed, switching to local disk: {e}")
+
+    # Fallback to local disk file if secrets are not set or API fails
     if os.path.exists(WATCHLIST_FILE):
         try:
             with open(WATCHLIST_FILE, "r") as f:
                 return json.load(f)
         except Exception:
             pass
+
     return {
         "⚡ Day Focus": ["NSE:ZOMATO", "NSE:CDSL", "NSE:TITAGARH"],
         "🔥 Week Focus": ["NSE:JINDWORLD", "NSE:TRENT", "NSE:HAL", "NSE:RECLTD"],
@@ -39,11 +56,32 @@ def load_watchlists():
     }
 
 def save_watchlists(watchlists_dict):
+    # Always save to local memory/disk first
     try:
         with open(WATCHLIST_FILE, "w") as f:
             json.dump(watchlists_dict, f, indent=2)
-    except Exception as e:
-        st.error(f"Error saving to disk: {e}")
+    except Exception:
+        pass
+
+    # Save immediately to GitHub Gist
+    if GITHUB_TOKEN and GIST_ID:
+        try:
+            headers = {
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+            payload = {
+                "files": {
+                    "local_watchlists.json": {
+                        "content": json.dumps(watchlists_dict, indent=2)
+                    }
+                }
+            }
+            res = requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=headers, json=payload, timeout=5)
+            if res.status_code != 200:
+                st.error(f"Failed to sync to GitHub Gist. Code: {res.status_code}")
+        except Exception as e:
+            st.error(f"Error saving to GitHub Gist: {e}")
 
 if "watchlists" not in st.session_state:
     st.session_state.watchlists = load_watchlists()
@@ -177,7 +215,7 @@ INDIAN_SECTOR_HIERARCHY = {
     ]
 }
 
-# 100% Deterministic Lookup Table for all 84 TradingView India Sector/Industry pairs
+# Deterministic Lookup Table for all 84 TradingView India Sector/Industry pairs
 TV_TO_INDIAN_MAP = {
     ('Commercial Services', 'Financial Publishing/Services'): ('Financial Services', 'Capital Markets'),
     ('Commercial Services', 'Miscellaneous Commercial Services'): ('Services', 'Commercial & Professional Services'),
@@ -337,7 +375,7 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
         st.error(f"Error fetching data from TradingView API: {e}")
         return pd.DataFrame()
 
-# Robust bare-name matching to prevent 'None' / blank columns
+# Bare-name matching to prevent 'None' / blank columns
 def fetch_watchlist_enrichMENT(symbol_list):
     if not symbol_list:
         return pd.DataFrame()
@@ -365,7 +403,7 @@ def fetch_watchlist_enrichMENT(symbol_list):
             df["Sector"] = mapped_sectors
             df["Industry"] = mapped_industries
         return df
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 # ==========================================
@@ -628,7 +666,7 @@ with tab_screener:
             selected_rows = parse_table_selection_multi(table_ev_scan, df_display, "TV_Symbol")
             
             # ----------------------------------------------------
-            # SCAN RESULTS ACTION BAR: ADD TO LIST OR CREATE NEW LIST
+            # SCAN RESULTS ACTION BAR: ADD TO LIST / CREATE NEW LIST
             # ----------------------------------------------------
             st.markdown("---")
             cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
@@ -789,7 +827,7 @@ with tab_watchlists:
                         save_watchlists(loaded_wls)
                         st.success("✅ Watchlists restored successfully!")
                         st.rerun()
-                except Exception as e:
+                except Exception:
                     st.error("Invalid file format. Ensure it is a valid backup file.")
 
     if not current_symbols:
