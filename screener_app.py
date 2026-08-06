@@ -438,22 +438,23 @@ def load_sector_monitor_data():
 # 0C. SITUATIONAL AWARENESS ENGINE FOR TAB 3
 # ==========================================
 def generate_market_awareness(df_mm):
-  if df_mm.empty or len(df_mm) < 5:
-    return {}
+  if df_mm is None or df_mm.empty or len(df_mm) < 3:
+    return {
+        "state": "🔄 Initializing Data...",
+        "breakout_cond": "Waiting for Market Monitor history...",
+        "pullback_cond": "Waiting for Market Monitor history...",
+        "consolidation_cond": "Waiting for Market Monitor history...",
+        "action": (
+            "Ensure NSE_Market_Monitor.xlsx is present in your repo or Gist."
+        ),
+    }
 
   curr = df_mm.iloc[0]
-  prev = df_mm.iloc[1]
+  prev = df_mm.iloc[1] if len(df_mm) > 1 else curr
 
   r5 = float(curr.get("5 Day Ratio", 1.0))
   r10 = float(curr.get("10 Day Ratio", 1.0))
-  ad = float(curr.get("A/D Ratio", 1.0))
   sma50 = float(curr.get("> 50 SMA (%)", 50.0))
-  up4 = int(curr.get("Up 4% Today", 0))
-  down4 = int(curr.get("Down 4% Today", 0))
-
-  r5_trend = (
-      "Improving ↗️" if r5 > float(prev.get("5 Day Ratio", 1.0)) else "Cooling ↘️"
-  )
 
   if r5 >= 2.0 and r10 >= 1.5 and sma50 >= 55.0:
     state = "🚀 Confirmed Uptrend (Strong Thrust & Breadth Expansion)"
@@ -518,9 +519,6 @@ def generate_market_awareness(df_mm):
       "r5": r5,
       "r10": r10,
       "sma50": sma50,
-      "up4": up4,
-      "down4": down4,
-      "r5_trend": r5_trend,
       "breakout_cond": breakout_cond,
       "pullback_cond": pullback_cond,
       "consolidation_cond": consolidation_cond,
@@ -529,8 +527,15 @@ def generate_market_awareness(df_mm):
 
 
 def generate_sector_awareness(df_heat):
-  if df_heat.empty:
-    return {}
+  if df_heat is None or df_heat.empty:
+    return {
+        "strong_sectors": ["Waiting for Sector Monitor..."],
+        "mom_sectors": ["Waiting for Sector Monitor..."],
+        "fade_sectors": ["Waiting for Sector Monitor..."],
+        "action": (
+            "Ensure NSE_Sector_Monitor.xlsx is present in your repo or Gist."
+        ),
+    }
 
   df = df_heat.copy()
   for col in [
@@ -3068,7 +3073,7 @@ with tab_watchlists:
       st.code(", ".join(current_symbols), language="text")
 
 # ==========================================
-# TAB 3: MARKET HEALTH & SECTOR ROTATION (WITH AWARENESS ENGINE)
+# TAB 3: MARKET HEALTH & SECTOR ROTATION
 # ==========================================
 with tab_market_health:
   st.subheader("🏥 Market Health & Sector Rotation Studio")
@@ -3081,62 +3086,61 @@ with tab_market_health:
   df_heat, df_rot = load_sector_monitor_data()
 
   # --------------------------------------------------------
-  # 🧠 SITUATIONAL AWARENESS & NEXT-DAY ACTION PLAN CARD
+  # 🧠 SITUATIONAL AWARENESS & NEXT-DAY ACTION PLAN CARD (ALWAYS VISIBLE)
   # --------------------------------------------------------
   market_insight = generate_market_awareness(df_mm)
   sector_insight = generate_sector_awareness(df_heat)
 
-  if market_insight and sector_insight:
-    with st.expander(
-        "🧠 Daily Automated Situational Awareness & Next-Day Game Plan",
-        expanded=True,
-    ):
+  with st.expander(
+      "🧠 Daily Automated Situational Awareness & Next-Day Game Plan",
+      expanded=True,
+  ):
+    st.markdown(
+        f"### Current Market Regime: **{market_insight.get('state')}**"
+    )
+
+    col_sa_left, col_sa_right = st.columns([1.1, 1.2])
+
+    with col_sa_left:
+      st.markdown("#### 📈 Setup Conduciveness Analysis")
       st.markdown(
-          f"### Current Market Regime: **{market_insight.get('state')}**"
+          "**• Momentum Breakout Setups:**"
+          f" {market_insight.get('breakout_cond')}\n"
+          "**• Pullback Setups:**"
+          f" {market_insight.get('pullback_cond')}\n"
+          "**• Consolidation Setups:**"
+          f" {market_insight.get('consolidation_cond')}"
       )
 
-      col_sa_left, col_sa_right = st.columns([1.1, 1.2])
+      st.markdown("#### 🎯 Market Game Plan for Tomorrow")
+      st.info(market_insight.get("action"))
 
-      with col_sa_left:
-        st.markdown("#### 📈 Setup Conduciveness Analysis")
-        st.markdown(
-            "**• Momentum Breakout Setups:**"
-            f" {market_insight.get('breakout_cond')}\n"
-            "**• Pullback Setups:**"
-            f" {market_insight.get('pullback_cond')}\n"
-            "**• Consolidation Setups:**"
-            f" {market_insight.get('consolidation_cond')}"
-        )
+    with col_sa_right:
+      st.markdown("#### 🔥 Sector Leadership & Momentum Tracking")
+      strong_str = (
+          ", ".join(sector_insight.get("strong_sectors", [])[:4])
+          if sector_insight.get("strong_sectors")
+          else "None"
+      )
+      mom_str = (
+          ", ".join(sector_insight.get("mom_sectors", [])[:4])
+          if sector_insight.get("mom_sectors")
+          else "None"
+      )
+      fade_str = (
+          ", ".join(sector_insight.get("fade_sectors", [])[:4])
+          if sector_insight.get("fade_sectors")
+          else "None"
+      )
 
-        st.markdown("#### 🎯 Market Game Plan for Tomorrow")
-        st.info(market_insight.get("action"))
+      st.markdown(
+          f"**• Strong Performing Sectors:** {strong_str}\n"
+          f"**• Sectors in Momentum (Focus Here):** {mom_str}\n"
+          f"**• Fading / Cooling Sectors (Avoid/Trim):** {fade_str}"
+      )
 
-      with col_sa_right:
-        st.markdown("#### 🔥 Sector Leadership & Momentum Tracking")
-        strong_str = (
-            ", ".join(sector_insight.get("strong_sectors", [])[:4])
-            if sector_insight.get("strong_sectors")
-            else "None"
-        )
-        mom_str = (
-            ", ".join(sector_insight.get("mom_sectors", [])[:4])
-            if sector_insight.get("mom_sectors")
-            else "None"
-        )
-        fade_str = (
-            ", ".join(sector_insight.get("fade_sectors", [])[:4])
-            if sector_insight.get("fade_sectors")
-            else "None"
-        )
-
-        st.markdown(
-            f"**• Strong Performing Sectors:** {strong_str}\n"
-            f"**• Sectors in Momentum (Focus Here):** {mom_str}\n"
-            f"**• Fading / Cooling Sectors (Avoid/Trim):** {fade_str}"
-        )
-
-        st.markdown("#### 🚀 Sector Action Plan for Tomorrow")
-        st.success(sector_insight.get("action"))
+      st.markdown("#### 🚀 Sector Action Plan for Tomorrow")
+      st.success(sector_insight.get("action"))
 
   # --------------------------------------------------------
   # SUB-TABS: MARKET MONITOR | SECTOR HEATMAP | ROTATION
@@ -3172,8 +3176,13 @@ with tab_market_health:
       with c4:
         st.metric("A/D Ratio", f"{latest.get('A/D Ratio', 'N/A')}")
 
-      styled_mm = style_market_monitor(df_mm)
-      st.table(styled_mm)
+      st.dataframe(
+          df_mm,
+          use_container_width=True,
+          hide_index=True,
+          height=520,
+          column_config=get_left_aligned_column_config(df_mm.columns),
+      )
     else:
       st.info("Market Monitor data not available yet.")
 
@@ -3187,8 +3196,13 @@ with tab_market_health:
           " acceleration; Negative (-) indicate loss of relative momentum."
       )
 
-      styled_heat = style_sector_heatmap(df_heat)
-      st.table(styled_heat)
+      st.dataframe(
+          df_heat,
+          use_container_width=True,
+          hide_index=True,
+          height=580,
+          column_config=get_left_aligned_column_config(df_heat.columns),
+      )
     else:
       st.info("Sector Heatmap data not available yet.")
 
@@ -3202,8 +3216,13 @@ with tab_market_health:
           " (`^CRSLDX`)."
       )
 
-      styled_rot = style_rotation_tracker(df_rot)
-      st.table(styled_rot)
+      st.dataframe(
+          df_rot,
+          use_container_width=True,
+          hide_index=True,
+          height=580,
+          column_config=get_left_aligned_column_config(df_rot.columns),
+      )
     else:
       st.info("Rotation Tracker data not available yet.")
 
