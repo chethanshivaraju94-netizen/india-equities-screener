@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# CUSTOM SLEEK CSS FOR ST.TABLE (COMPACT & NO WRAP)
+# CUSTOM SLEEK CSS FOR ST.TABLE (NO WRAPPING & FIXED WIDTHS)
 # ==========================================
 TABLE_CUSTOM_CSS = """
 <style>
@@ -33,25 +33,30 @@ div[data-testid="stTable"] table {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
 }
 div[data-testid="stTable"] th {
-    padding: 8px 10px !important;
+    padding: 8px 12px !important;
     text-align: center !important;
     font-weight: 600 !important;
     white-space: nowrap !important;
     background-color: #1E222D !important;
     color: #E0E2EC !important;
     border-bottom: 2px solid #2B2F3E !important;
+    min-width: 85px !important;
 }
 div[data-testid="stTable"] td {
-    padding: 6px 10px !important;
+    padding: 7px 12px !important;
     text-align: center !important;
     white-space: nowrap !important;
     border-bottom: 1px solid #2B2F3E !important;
+    min-width: 85px !important;
 }
-/* Left-align text for first column (Date / Sector) */
+/* Lock the First Column (Date / Sector) so 2026-08-06 never breaks into two lines */
 div[data-testid="stTable"] th:nth-child(1),
 div[data-testid="stTable"] td:nth-child(1) {
     text-align: left !important;
     font-weight: 600 !important;
+    white-space: nowrap !important;
+    min-width: 115px !important;
+    max-width: 150px !important;
 }
 </style>
 """
