@@ -263,6 +263,20 @@ def get_wl_dots(symbol, watchlists_dict):
     return "".join(dots)
 
 # ==========================================
+# CENTER-ALIGNED TABLE CONFIG BUILDER
+# ==========================================
+def get_centered_column_config(col_list):
+    cfg = {}
+    for col in col_list:
+        if col == "TV_Link":
+            cfg[col] = st.column_config.LinkColumn("TradingView", display_text="↗️ Chart", alignment="center")
+        elif col == "Screener_Link":
+            cfg[col] = st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener", alignment="center")
+        else:
+            cfg[col] = st.column_config.Column(col, alignment="center")
+    return cfg
+
+# ==========================================
 # REORDER CALLBACK FUNCTIONS
 # ==========================================
 def cb_move_top(wl_name, sym):
@@ -524,6 +538,31 @@ def coalesce_columns(df, col_list):
     return res
 
 # ==========================================
+# ROBUST MULTI-ALIAS IPO DATE HELPER
+# ==========================================
+def clean_tv_date_col(val_series):
+    num_s = pd.to_numeric(val_series, errors='coerce')
+    num_valid = num_s.where(num_s > 0)
+    dt_unix_s = pd.to_datetime(num_valid.where(num_valid <= 1e11), unit='s', errors='coerce')
+    dt_unix_ms = pd.to_datetime(num_valid.where(num_valid > 1e11), unit='ms', errors='coerce')
+    dt_unix = dt_unix_s.fillna(dt_unix_ms)
+    dt_iso = pd.to_datetime(val_series, errors='coerce')
+    dt_combined = dt_unix.fillna(dt_iso)
+    return dt_combined.where(dt_combined >= pd.Timestamp('1980-01-01'), pd.NaT)
+
+def add_clean_ipo_date_col(df):
+    ipo_cols = [c for c in ['ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date', 'listing_date'] if c in df.columns]
+    if ipo_cols:
+        clean_dt_df = pd.DataFrame(index=df.index)
+        for c in ipo_cols:
+            clean_dt_df[c] = clean_tv_date_col(df[c])
+        df['IPO_Date_DT'] = clean_dt_df.max(axis=1)
+    else:
+        df['IPO_Date_DT'] = pd.NaT
+    df['IPO Date'] = df['IPO_Date_DT'].dt.strftime('%Y-%m-%d').fillna("N/A")
+    return df
+
+# ==========================================
 # 2. BACKEND API QUERIES
 # ==========================================
 EPS_Q_ALIASES = [
@@ -549,7 +588,7 @@ def fetch_screener_data(exchanges, min_mcap, vol_period_days, ma_columns_to_fetc
         'name', 'close', 'change', 'volume', 'market_cap_basic',
         tv_vol_col, 'ADR', 'price_52_week_high',
         'price_52_week_low', 'exchange', 'type', 'industry', 'sector',
-        'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
+        'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date', 'listing_date',
         'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y'
     ] + EPS_Q_ALIASES + SALES_Q_ALIASES
     
@@ -576,7 +615,7 @@ def fetch_watchlist_enrichMENT(symbol_list):
     bare_names = [s.split(":")[-1].strip().upper() for s in symbol_list]
     select_cols = [
         'name', 'close', 'change', 'ADR', 'market_cap_basic', 'exchange', 'industry', 'sector',
-        'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date',
+        'index', 'ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date', 'listing_date',
         'Perf.W', 'Perf.1M', 'Perf.3M', 'Perf.6M', 'Perf.YTD', 'Perf.Y'
     ] + EPS_Q_ALIASES + SALES_Q_ALIASES
     
@@ -595,6 +634,7 @@ def fetch_watchlist_enrichMENT(symbol_list):
             df['Market Cap (₹ Cr)'] = (df['market_cap_basic'] / 10_000_000).round(2)
             df['EPS Q YoY %'] = coalesce_columns(df, EPS_Q_ALIASES).round(2)
             df['Sales Q YoY %'] = coalesce_columns(df, SALES_Q_ALIASES).round(2)
+            df = add_clean_ipo_date_col(df)
             
             if 'Perf.W' in df.columns: df['Perf % 1W'] = pd.to_numeric(df['Perf.W'], errors='coerce').round(2)
             if 'Perf.1M' in df.columns: df['Perf % 1M'] = pd.to_numeric(df['Perf.1M'], errors='coerce').round(2)
@@ -1124,25 +1164,9 @@ with tab_screener:
                 df = df[df['Sales Q YoY %'] >= min_sales_q]
 
         # ----------------------------------------------------
-        # ROBUST DUAL-PARSER FOR IPO DATES
+        # ROBUST MULTI-ALIAS IPO DATE PARSING
         # ----------------------------------------------------
-        def clean_tv_date_col(val_series):
-            num_s = pd.to_numeric(val_series, errors='coerce')
-            dt_unix = pd.to_datetime(num_s.where(num_s > 0), unit='s', errors='coerce')
-            dt_iso = pd.to_datetime(val_series, errors='coerce')
-            dt_combined = dt_unix.fillna(dt_iso)
-            return dt_combined.where(dt_combined >= pd.Timestamp('1980-01-01'), pd.NaT)
-
-        ipo_cols = [c for c in ['ipo_offer_date', 'offer_date', 'recent_ipo_date', 'ipo_date'] if c in df.columns]
-        if ipo_cols:
-            clean_dt_df = pd.DataFrame(index=df.index)
-            for c in ipo_cols:
-                clean_dt_df[c] = clean_tv_date_col(df[c])
-            df['IPO_Date_DT'] = clean_dt_df.max(axis=1)
-        else:
-            df['IPO_Date_DT'] = pd.NaT
-
-        df['IPO Date'] = df['IPO_Date_DT'].dt.strftime('%Y-%m-%d').fillna("N/A")
+        df = add_clean_ipo_date_col(df)
         
         if en_ipo and ipo_filter_choice != "All Stocks (No IPO Filter)":
             now_dt = pd.Timestamp.now()
@@ -1309,12 +1333,13 @@ with tab_screener:
                     df_display[ma["label"]] = df_display[ma["col_name"]].round(2)
                     active_ma_labels.append(ma["label"])
             
+            # Index removed from displayed columns
             table_columns = [
                 'S.No.', 'TV_Symbol', 'name', 'Close', 'Change %', 
                 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %'
             ] + active_perf_labels + active_ma_labels + [
                 vol_display_label, 'Market Cap (₹ Cr)', 
-                'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link'
+                'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link'
             ]
 
             st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
@@ -1327,10 +1352,7 @@ with tab_screener:
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="multi-row",
-                column_config={
-                    "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart"),
-                    "Screener_Link": st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener")
-                },
+                column_config=get_centered_column_config(table_columns),
                 key=f"scan_table_{rc}_{sc}"
             )
             
@@ -1525,7 +1547,7 @@ with tab_watchlists:
                 merged_df["TV_Symbol"] = merged_df["TV_Symbol_tv"].fillna(merged_df["TV_Symbol"])
         else:
             merged_df = ordered_df.copy()
-            for col_name in ['Close', 'Change %', 'ADR_pct', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry']:
+            for col_name in ['Close', 'Change %', 'ADR_pct', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'IPO Date', 'Sector', 'Industry']:
                 merged_df[col_name] = "N/A"
 
         merged_df['Close'] = merged_df.get('Close', pd.Series()).fillna("N/A")
@@ -1538,18 +1560,7 @@ with tab_watchlists:
         merged_df['Perf % 3M'] = merged_df.get('Perf % 3M', pd.Series()).fillna("N/A")
         merged_df['Perf % 6M'] = merged_df.get('Perf % 6M', pd.Series()).fillna("N/A")
         merged_df['Market Cap (₹ Cr)'] = merged_df.get('Market Cap (₹ Cr)', pd.Series()).fillna("N/A")
-        
-        merged_df['Index'] = merged_df.get('index', pd.Series()).fillna("N/A")
-        if 'recent_ipo_date' in merged_df.columns and 'ipo_date' in merged_df.columns:
-            merged_df['IPO_Date_Raw'] = merged_df['recent_ipo_date'].fillna(merged_df['ipo_date'])
-        elif 'recent_ipo_date' in merged_df.columns:
-            merged_df['IPO_Date_Raw'] = merged_df['recent_ipo_date']
-        elif 'ipo_date' in merged_df.columns:
-            merged_df['IPO_Date_Raw'] = merged_df['ipo_date']
-        else:
-            merged_df['IPO_Date_Raw'] = pd.NaT
-            
-        merged_df['IPO Date'] = pd.to_datetime(merged_df['IPO_Date_Raw'], errors='coerce').dt.strftime('%Y-%m-%d').fillna("N/A")
+        merged_df['IPO Date'] = merged_df.get('IPO Date', pd.Series()).fillna("N/A")
         merged_df['Sector'] = merged_df.get('Sector', pd.Series()).fillna("Unclassified")
         merged_df['Industry'] = merged_df.get('Industry', pd.Series()).fillna("Unclassified")
         
@@ -1562,7 +1573,8 @@ with tab_watchlists:
             axis=1
         )
         
-        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'Index', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link']
+        # Index removed from displayed columns
+        wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link']
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
         st.caption("💡 **Watchlist Color Legend:** 🔵 Post Breakout Monitor | 🟢 Focus List | 🟡 Weekly Focus | 🟠 Scan Bulk | 🔴 Sold Stocks | 🟣 Custom")
@@ -1575,10 +1587,7 @@ with tab_watchlists:
             height=460,
             on_select="rerun",
             selection_mode="multi-row",
-            column_config={
-                "TV_Link": st.column_config.LinkColumn("TradingView", display_text="↗️ Chart"),
-                "Screener_Link": st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener")
-            },
+            column_config=get_centered_column_config(wl_cols),
             key=f"wl_manage_table_{wsc}"
         )
 
