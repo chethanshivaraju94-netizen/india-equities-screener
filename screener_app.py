@@ -25,6 +25,10 @@ PRESETS_FILE = "local_filter_presets.json"
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
 GIST_ID = st.secrets.get("GIST_ID", None)
 
+GITHUB_RAW_BASE = (
+    "https://raw.githubusercontent.com/chethanshivaraju94-netizen/nse-market-monitor/main"
+)
+
 
 def load_watchlists():
   if GITHUB_TOKEN and GIST_ID:
@@ -301,7 +305,7 @@ if "wl_sel_counter" not in st.session_state:
 
 
 # ==========================================
-# 0B. HYBRID NSE CIRCUIT PRICE BAND CACHE
+# 0B. HYBRID NSE CIRCUIT & MARKET MONITOR CACHE
 # ==========================================
 @st.cache_data(ttl=43200, show_spinner="📡 Synchronizing Daily Circuit Price Bands...")
 def get_nse_circuit_bands():
@@ -348,6 +352,56 @@ def get_nse_circuit_bands():
       pass
 
   return symbol_to_band
+
+
+@st.cache_data(
+    ttl=3600, show_spinner="📡 Fetching latest Market Health & Sector tables..."
+)
+def load_market_monitor_data():
+  local_file = "NSE_Market_Monitor.xlsx"
+  url = f"{GITHUB_RAW_BASE}/NSE_Market_Monitor.xlsx"
+  try:
+    if os.path.exists(local_file):
+      df = pd.read_excel(local_file, sheet_name=0)
+    else:
+      df = pd.read_excel(url, sheet_name=0)
+    if "Date" in df.columns:
+      df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime(
+          "%Y-%m-%d"
+      )
+    return df
+  except Exception as e:
+    st.error(f"Could not load Market Monitor file: {e}")
+    return pd.DataFrame()
+
+
+@st.cache_data(
+    ttl=3600,
+    show_spinner="📡 Fetching Sector Rotation & Heatmap tables...",
+)
+def load_sector_monitor_data():
+  local_file = "NSE_Sector_Monitor.xlsx"
+  url = f"{GITHUB_RAW_BASE}/NSE_Sector_Monitor.xlsx"
+  try:
+    xls = pd.ExcelFile(local_file if os.path.exists(local_file) else url)
+    df_heat = (
+        pd.read_excel(xls, sheet_name="Heatmap")
+        if "Heatmap" in xls.sheet_names
+        else pd.DataFrame()
+    )
+    df_rot = (
+        pd.read_excel(xls, sheet_name="Rotation Tracker")
+        if "Rotation Tracker" in xls.sheet_names
+        else pd.DataFrame()
+    )
+    if "Date" in df_rot.columns:
+      df_rot["Date"] = pd.to_datetime(
+          df_rot["Date"], errors="coerce"
+      ).dt.strftime("%Y-%m-%d")
+    return df_heat, df_rot
+  except Exception as e:
+    st.error(f"Could not load Sector Monitor file: {e}")
+    return pd.DataFrame(), pd.DataFrame()
 
 
 # ==========================================
@@ -443,6 +497,12 @@ def get_left_aligned_column_config(col_list):
       cfg[col] = st.column_config.Column(col, alignment="left", width=135)
     elif col == "name":
       cfg[col] = st.column_config.Column(col, alignment="left", width=140)
+    elif col in ["Date", "Sector"]:
+      cfg[col] = st.column_config.Column(col, alignment="left", width=130)
+    elif "Rank Velocity" in col:
+      cfg[col] = st.column_config.NumberColumn(
+          col, alignment="left", format="%+d", width=125
+      )
     elif col in ["Sector", "Basic Industry"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=220)
     elif col == "Industry":
@@ -1755,11 +1815,12 @@ max_results = st.sidebar.slider(
 )
 
 # ==========================================
-# 4. TOP-LEVEL WORKSPACE TABS
+# 4. TOP-LEVEL WORKSPACE TABS (3 TABS NOW)
 # ==========================================
-tab_screener, tab_watchlists = st.tabs([
+tab_screener, tab_watchlists, tab_market_health = st.tabs([
     "🔎 CAN SLIM Screener & Rotation",
     "⭐ Multi-Watchlist Studio & TV Free-Tier Bridge",
+    "🏥 Market Health & Sector Rotation",
 ])
 
 # ==========================================
@@ -2665,9 +2726,6 @@ with tab_watchlists:
         axis=1,
     )
 
-    # ----------------------------------------------------
-    # ADD VISUAL CIRCUIT BADGE (🚨) TO WATCHLIST NAME COLUMN
-    # ----------------------------------------------------
     nse_bands_map = get_nse_circuit_bands()
     merged_df["_is_circuit_badge"] = merged_df.apply(
         lambda r: is_circuit_stock_badge(r, nse_bands_map), axis=1
@@ -2812,3 +2870,132 @@ with tab_watchlists:
         expanded=False,
     ):
       st.code(", ".join(current_symbols), language="text")
+
+# ==========================================
+# TAB 3: MARKET HEALTH & SECTOR ROTATION
+# ==========================================
+with tab_market_health:
+  st.subheader("🏥 Market Health & Sector Rotation Studio")
+  st.markdown(
+      "Automated **Nifty 500 Breadth Monitor** and **27-Sector CAN SLIM"
+      " Rotation Engine**. Automatically synchronized with your daily"
+      " scheduled cronjob."
+  )
+
+  tab_mm, tab_sector_heat, tab_sector_rot = st.tabs([
+      "📈 NSE Market Breadth Monitor",
+      "🔥 Sector RS Heatmap",
+      "📊 Historical Rotation Tracker",
+  ])
+
+  # ------------------------------------------
+  # TAB 3A: NSE MARKET MONITOR
+  # ------------------------------------------
+  with tab_mm:
+    df_mm = load_market_monitor_data()
+    if not df_mm.empty:
+      st.markdown(
+          f"#### 📊 Nifty Total Market Breadth & VCP Indicators ({len(df_mm)} Days)"
+      )
+
+      latest = df_mm.iloc[0] if len(df_mm) > 0 else {}
+      c1, c2, c3, c4 = st.columns(4)
+      with c1:
+        st.metric(
+            "Latest Nifty 500 Close",
+            f"{latest.get('Nifty 500 Close', 'N/A')}",
+            f"{latest.get('Nifty 500 Chg %', 0)}%",
+        )
+      with c2:
+        st.metric(
+            "5-Day Thrust Ratio", f"{latest.get('5 Day Ratio', 'N/A')}"
+        )
+      with c3:
+        st.metric(
+            "10-Day Thrust Ratio", f"{latest.get('10 Day Ratio', 'N/A')}"
+        )
+      with c4:
+        st.metric("A/D Ratio", f"{latest.get('A/D Ratio', 'N/A')}")
+
+      st.dataframe(
+          df_mm,
+          use_container_width=True,
+          hide_index=True,
+          height=520,
+          column_config=get_left_aligned_column_config(df_mm.columns),
+      )
+    else:
+      st.info(
+          "Market Monitor data not available yet. Ensure"
+          " `NSE_Market_Monitor.xlsx` exists in your repository root."
+      )
+
+  # ------------------------------------------
+  # TAB 3B: SECTOR RS HEATMAP
+  # ------------------------------------------
+  with tab_sector_heat:
+    df_heat, _ = load_sector_monitor_data()
+    if not df_heat.empty:
+      st.markdown(
+          "#### 🔥 27-Sector CAN SLIM Relative Strength Heatmap (Ranked by 65D RS)"
+      )
+      st.caption(
+          "💡 **Velocity Legend:** Positive (+) values indicate upward rank"
+          " acceleration; Negative (-) indicate loss of relative momentum."
+      )
+
+      st.dataframe(
+          df_heat,
+          use_container_width=True,
+          hide_index=True,
+          height=580,
+          column_config=get_left_aligned_column_config(df_heat.columns),
+      )
+    else:
+      st.info(
+          "Sector Heatmap data not available yet. Ensure"
+          " `NSE_Sector_Monitor.xlsx` exists in your repository root."
+      )
+
+  # ------------------------------------------
+  # TAB 3C: HISTORICAL ROTATION TRACKER
+  # ------------------------------------------
+  with tab_sector_rot:
+    _, df_rot = load_sector_monitor_data()
+    if not df_rot.empty:
+      st.markdown(
+          "#### 📊 65-Day Historical Relative Strength Ranks (All Sectors)"
+      )
+      st.caption(
+          "💡 Rank 1 = Strongest Relative Strength vs. Nifty 500 Benchmark"
+          " (`^CRSLDX`)."
+      )
+
+      st.dataframe(
+          df_rot,
+          use_container_width=True,
+          hide_index=True,
+          height=580,
+          column_config=get_left_aligned_column_config(df_rot.columns),
+      )
+    else:
+      st.info(
+          "Rotation Tracker data not available yet. Ensure"
+          " `NSE_Sector_Monitor.xlsx` exists in your repository root."
+      )
+
+  st.markdown("---")
+  with st.expander(
+      "⚡ Optional: Force Real-Time Scan Now (Bypass Daily Schedule)"
+  ):
+    st.caption(
+        "Your scheduled cronjob automatically pushes updated Excel files to"
+        " GitHub every weekday. Click below only if you want to force an"
+        " immediate intraday refresh of Streamlit's data cache."
+    )
+    if st.button(
+        "🔄 Clear Streamlit Data Cache & Reload", type="secondary"
+    ):
+      st.cache_data.clear()
+      st.success("✅ Data cache cleared! Reloading latest tables...")
+      st.rerun()
