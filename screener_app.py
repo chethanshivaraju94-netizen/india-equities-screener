@@ -382,6 +382,48 @@ def get_wl_dots(symbol, watchlists_dict):
 
 
 # ==========================================
+# VISUAL CIRCUIT STOCK BADGE HELPER
+# ==========================================
+def is_circuit_stock_badge(row, bands_map):
+  sym = str(row.get("name", "")).replace("🚨", "").strip().upper()
+  band_val = bands_map.get(sym, "")
+  if band_val in ["2", "5", "10"]:
+    return True
+
+  high = pd.to_numeric(row.get("high"), errors="coerce")
+  low = pd.to_numeric(row.get("low"), errors="coerce")
+  open_p = pd.to_numeric(row.get("open"), errors="coerce")
+  close_p = pd.to_numeric(row.get("close"), errors="coerce")
+  change_p = abs(pd.to_numeric(row.get("change"), errors="coerce"))
+
+  if (
+      pd.notna(high)
+      and pd.notna(low)
+      and high == low
+      and high > 0
+      and pd.notna(change_p)
+      and change_p > 1.5
+  ):
+    return True
+
+  is_locked = (
+      pd.notna(close_p)
+      and pd.notna(high)
+      and pd.notna(low)
+      and (close_p == high or close_p == low)
+      and (high != open_p)
+  )
+  if is_locked and (
+      (1.97 <= change_p <= 2.00)
+      or (4.97 <= change_p <= 5.00)
+      or (9.97 <= change_p <= 10.00)
+  ):
+    return True
+
+  return False
+
+
+# ==========================================
 # 100% LEFT-ALIGNED & ZERO-TRUNCATION TABLE CONFIG
 # ==========================================
 def get_left_aligned_column_config(col_list):
@@ -400,7 +442,7 @@ def get_left_aligned_column_config(col_list):
     elif col == "TV_Symbol":
       cfg[col] = st.column_config.Column(col, alignment="left", width=135)
     elif col == "name":
-      cfg[col] = st.column_config.Column(col, alignment="left", width=125)
+      cfg[col] = st.column_config.Column(col, alignment="left", width=140)
     elif col in ["Sector", "Basic Industry"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=220)
     elif col == "Industry":
@@ -2141,6 +2183,19 @@ with tab_screener:
           axis=1,
       )
 
+      # ----------------------------------------------------
+      # ADD VISUAL CIRCUIT BADGE (🚨) TO NAME COLUMN
+      # ----------------------------------------------------
+      df_display["_is_circuit_badge"] = df_display.apply(
+          lambda r: is_circuit_stock_badge(r, nse_bands_map), axis=1
+      )
+      df_display["name"] = df_display.apply(
+          lambda r: (
+              f"{r['name']} 🚨" if r["_is_circuit_badge"] else str(r["name"])
+          ),
+          axis=1,
+      )
+
       canonical_perf_order = [
           "Perf % 1W",
           "Perf % 1M",
@@ -2194,8 +2249,9 @@ with tab_screener:
 
       st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
       st.caption(
-          "💡 **Watchlist Color Legend:** 🔵 Post Breakout Monitor | 🟢 Focus List |"
-          " 🟡 Weekly Focus | 🟠 Scan Bulk | 🔴 Sold Stocks | 🟣 Custom"
+          "💡 **Watchlist Color Legend:** 🔵 Post Breakout Monitor | 🟢 Focus"
+          " List | 🟡 Weekly Focus | 🟠 Scan Bulk | 🔴 Sold Stocks | 🟣 Custom"
+          " | 🚨 **Circuit Band / Freeze**"
       )
 
       sc = st.session_state.scan_sel_counter
@@ -2609,9 +2665,24 @@ with tab_watchlists:
         axis=1,
     )
 
+    # ----------------------------------------------------
+    # ADD VISUAL CIRCUIT BADGE (🚨) TO WATCHLIST NAME COLUMN
+    # ----------------------------------------------------
+    nse_bands_map = get_nse_circuit_bands()
+    merged_df["_is_circuit_badge"] = merged_df.apply(
+        lambda r: is_circuit_stock_badge(r, nse_bands_map), axis=1
+    )
+    merged_df["name"] = merged_df.apply(
+        lambda r: (
+            f"{r['name']} 🚨" if r["_is_circuit_badge"] else str(r["name"])
+        ),
+        axis=1,
+    )
+
     wl_cols = [
         "S.No.",
         "TV_Symbol",
+        "name",
         "Close",
         "Change %",
         "ADR %",
@@ -2633,8 +2704,9 @@ with tab_watchlists:
         f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)"
     )
     st.caption(
-        "💡 **Watchlist Color Legend:** 🔵 Post Breakout Monitor | 🟢 Focus List |"
-        " 🟡 Weekly Focus | 🟠 Scan Bulk | 🔴 Sold Stocks | 🟣 Custom"
+        "💡 **Watchlist Color Legend:** 🔵 Post Breakout Monitor | 🟢 Focus"
+        " List | 🟡 Weekly Focus | 🟠 Scan Bulk | 🔴 Sold Stocks | 🟣 Custom"
+        " | 🚨 **Circuit Band / Freeze**"
     )
 
     wsc = st.session_state.wl_sel_counter
