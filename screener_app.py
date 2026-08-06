@@ -263,17 +263,21 @@ def get_wl_dots(symbol, watchlists_dict):
     return "".join(dots)
 
 # ==========================================
-# CENTER-ALIGNED TABLE CONFIG BUILDER
+# LEFT-ALIGNED & SMART-SIZED TABLE CONFIG
 # ==========================================
-def get_centered_column_config(col_list):
+def get_left_aligned_column_config(col_list):
     cfg = {}
     for col in col_list:
         if col == "TV_Link":
-            cfg[col] = st.column_config.LinkColumn("TradingView", display_text="↗️ Chart", alignment="center")
+            cfg[col] = st.column_config.LinkColumn("TradingView", display_text="↗️ Chart", alignment="left", width="small")
         elif col == "Screener_Link":
-            cfg[col] = st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener", alignment="center")
+            cfg[col] = st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener", alignment="left", width="small")
+        elif col in ["S.No.", "IPO Date"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width="small")
+        elif col in ["TV_Symbol", "name", "Sector", "Industry", "Basic Industry"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width="medium")
         else:
-            cfg[col] = st.column_config.Column(col, alignment="center")
+            cfg[col] = st.column_config.Column(col, alignment="left", width="small")
     return cfg
 
 # ==========================================
@@ -1253,7 +1257,16 @@ with tab_screener:
                     fig_sec.update_layout(annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)], showlegend=False, margin=dict(t=20, b=10, l=20, r=20), height=360)
                     chart_ev_sec = st.plotly_chart(fig_sec, use_container_width=True, on_select="rerun", selection_mode="points", key=f"sec_chart_{rc}")
                 with c_table1:
-                    table_ev_sec = st.dataframe(sec_counts, use_container_width=True, hide_index=True, height=360, on_select="rerun", selection_mode="multi-row", key=f"sec_table_{rc}")
+                    table_ev_sec = st.dataframe(
+                        sec_counts, 
+                        use_container_width=True, 
+                        hide_index=True, 
+                        height=360, 
+                        on_select="rerun", 
+                        selection_mode="multi-row",
+                        column_config=get_left_aligned_column_config(sec_counts.columns),
+                        key=f"sec_table_{rc}"
+                    )
                 sel_sec_chart = parse_chart_selection_multi(chart_ev_sec)
                 sel_sec_table = parse_table_selection_multi(table_ev_sec, sec_counts, "Sector")
                 active_sectors = sel_sec_table if sel_sec_table else sel_sec_chart
@@ -1280,7 +1293,16 @@ with tab_screener:
                     fig_ind.update_layout(annotations=[dict(text=f"<b>Total Stocks:<br>{ind_total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)], showlegend=False, margin=dict(t=20, b=10, l=20, r=20), height=360)
                     chart_ev_ind = st.plotly_chart(fig_ind, use_container_width=True, on_select="rerun", selection_mode="points", key=f"ind_chart_{rc}_{sec_hash}")
                 with c_table2:
-                    table_ev_ind = st.dataframe(ind_counts, use_container_width=True, hide_index=True, height=360, on_select="rerun", selection_mode="multi-row", key=f"ind_table_{rc}_{sec_hash}")
+                    table_ev_ind = st.dataframe(
+                        ind_counts, 
+                        use_container_width=True, 
+                        hide_index=True, 
+                        height=360, 
+                        on_select="rerun", 
+                        selection_mode="multi-row",
+                        column_config=get_left_aligned_column_config(ind_counts.columns),
+                        key=f"ind_table_{rc}_{sec_hash}"
+                    )
                 sel_ind_chart = parse_chart_selection_multi(chart_ev_ind)
                 sel_ind_table = parse_table_selection_multi(table_ev_ind, ind_counts, "Basic Industry")
                 active_industries = sel_ind_table if sel_ind_table else sel_ind_chart
@@ -1333,7 +1355,6 @@ with tab_screener:
                     df_display[ma["label"]] = df_display[ma["col_name"]].round(2)
                     active_ma_labels.append(ma["label"])
             
-            # Index removed from displayed columns
             table_columns = [
                 'S.No.', 'TV_Symbol', 'name', 'Close', 'Change %', 
                 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %'
@@ -1352,7 +1373,7 @@ with tab_screener:
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="multi-row",
-                column_config=get_centered_column_config(table_columns),
+                column_config=get_left_aligned_column_config(table_columns),
                 key=f"scan_table_{rc}_{sc}"
             )
             
@@ -1573,7 +1594,6 @@ with tab_watchlists:
             axis=1
         )
         
-        # Index removed from displayed columns
         wl_cols = ['S.No.', 'TV_Symbol', 'Close', 'Change %', 'ADR %', 'EPS Q YoY %', 'Sales Q YoY %', 'Perf % 1W', 'Perf % 1M', 'Perf % 3M', 'Perf % 6M', 'Market Cap (₹ Cr)', 'IPO Date', 'Sector', 'Industry', 'TV_Link', 'Screener_Link']
 
         st.markdown(f"### ⭐ Watchlist: **{active_wl}** ({len(current_symbols)} Stocks)")
@@ -1587,7 +1607,7 @@ with tab_watchlists:
             height=460,
             on_select="rerun",
             selection_mode="multi-row",
-            column_config=get_centered_column_config(wl_cols),
+            column_config=get_left_aligned_column_config(wl_cols),
             key=f"wl_manage_table_{wsc}"
         )
 
