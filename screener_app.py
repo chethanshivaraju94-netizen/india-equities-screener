@@ -18,6 +18,46 @@ st.set_page_config(
 )
 
 # ==========================================
+# CUSTOM SLEEK CSS FOR ST.TABLE (COMPACT & NO WRAP)
+# ==========================================
+TABLE_CUSTOM_CSS = """
+<style>
+/* Sleek styling for Streamlit native HTML tables (st.table) in Tab 3 */
+div[data-testid="stTable"] {
+    overflow-x: auto !important;
+}
+div[data-testid="stTable"] table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 13px !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+div[data-testid="stTable"] th {
+    padding: 8px 10px !important;
+    text-align: center !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+    background-color: #1E222D !important;
+    color: #E0E2EC !important;
+    border-bottom: 2px solid #2B2F3E !important;
+}
+div[data-testid="stTable"] td {
+    padding: 6px 10px !important;
+    text-align: center !important;
+    white-space: nowrap !important;
+    border-bottom: 1px solid #2B2F3E !important;
+}
+/* Left-align text for first column (Date / Sector) */
+div[data-testid="stTable"] th:nth-child(1),
+div[data-testid="stTable"] td:nth-child(1) {
+    text-align: left !important;
+    font-weight: 600 !important;
+}
+</style>
+"""
+st.markdown(TABLE_CUSTOM_CSS, unsafe_allow_html=True)
+
+# ==========================================
 # 0. AUTOMATIC GITHUB GIST PERSISTENCE
 # ==========================================
 WATCHLIST_FILE = "local_watchlists.json"
@@ -515,7 +555,15 @@ def safe_map(styler, func, subset=None):
 def style_market_monitor(df):
   styler = df.style
   format_dict = {}
-  for col in [
+  int_cols = [
+      "Up 4% Today",
+      "Down 4% Today",
+      "Advances",
+      "Declines",
+      "52W Highs",
+      "52W Lows",
+  ]
+  float_cols = [
       "5 Day Ratio",
       "10 Day Ratio",
       "A/D Ratio",
@@ -526,7 +574,11 @@ def style_market_monitor(df):
       "> 10 EMA (%)",
       "Nifty 500 Close",
       "Nifty 500 Chg %",
-  ]:
+  ]
+  for col in int_cols:
+    if col in df.columns:
+      format_dict[col] = "{:.0f}"
+  for col in float_cols:
     if col in df.columns:
       format_dict[col] = "{:.2f}"
   styler = styler.format(format_dict, na_rep="N/A")
@@ -581,17 +633,32 @@ def style_market_monitor(df):
 def style_sector_heatmap(df):
   styler = df.style
   format_dict = {}
-  for col in ["Close", "% Chg", "5D RS %", "21D RS %", "65D RS %", "% Off RS High"]:
-    if col in df.columns:
-      format_dict[col] = "{:.2f}"
-  styler = styler.format(format_dict, na_rep="N/A")
-
+  int_cols = ["65D RS Rank"]
   vel_cols = [
       "5D Rank Velocity",
       "10D Rank Velocity",
       "21D Rank Velocity",
       "65D Rank Velocity",
   ]
+  float_cols = [
+      "Close",
+      "% Chg",
+      "5D RS %",
+      "21D RS %",
+      "65D RS %",
+      "% Off RS High",
+  ]
+  for col in int_cols:
+    if col in df.columns:
+      format_dict[col] = "{:.0f}"
+  for col in vel_cols:
+    if col in df.columns:
+      format_dict[col] = "{:+.0f}"
+  for col in float_cols:
+    if col in df.columns:
+      format_dict[col] = "{:.2f}"
+  styler = styler.format(format_dict, na_rep="N/A")
+
   for c in vel_cols:
     if c in df.columns:
       styler = safe_map(
@@ -633,6 +700,9 @@ def style_sector_heatmap(df):
 def style_rotation_tracker(df):
   styler = df.style
   sec_cols = [c for c in df.columns if c != "Date"]
+  format_dict = {c: "{:.0f}" for c in sec_cols}
+  styler = styler.format(format_dict, na_rep="N/A")
+
   num_sec = max(len(sec_cols), 1)
   mid_rank = max((num_sec // 2) + 1, 1)
   for c in sec_cols:
