@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import re
@@ -24,10 +25,6 @@ PRESETS_FILE = "local_filter_presets.json"
 
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
 GIST_ID = st.secrets.get("GIST_ID", None)
-
-GITHUB_RAW_BASE = (
-    "https://raw.githubusercontent.com/chethanshivaraju94-netizen/nse-market-monitor/main"
-)
 
 
 def load_watchlists():
@@ -305,8 +302,40 @@ if "wl_sel_counter" not in st.session_state:
 
 
 # ==========================================
-# 0B. HYBRID NSE CIRCUIT & MARKET MONITOR CACHE
+# 0B. AUTHENTICATED EXCEL LOADER & NSE BANDS CACHE
 # ==========================================
+def fetch_excel_file(filename):
+  if os.path.exists(filename):
+    return filename
+
+  headers = {
+      "User-Agent": (
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
+          " like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      )
+  }
+  if GITHUB_TOKEN:
+    headers["Authorization"] = f"token {GITHUB_TOKEN}"
+
+  repos = [
+      "chethanshivaraju94-netizen/nse-market-monitor",
+      "chethanshivaraju94-netizen/India-equities-screener",
+  ]
+  branches = ["main", "master"]
+
+  for repo in repos:
+    for branch in branches:
+      url = f"https://raw.githubusercontent.com/{repo}/{branch}/{filename}"
+      try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+          return io.BytesIO(res.content)
+      except Exception:
+        pass
+
+  return None
+
+
 @st.cache_data(ttl=43200, show_spinner="📡 Synchronizing Daily Circuit Price Bands...")
 def get_nse_circuit_bands():
   symbol_to_band = {}
@@ -358,20 +387,19 @@ def get_nse_circuit_bands():
     ttl=3600, show_spinner="📡 Fetching latest Market Health & Sector tables..."
 )
 def load_market_monitor_data():
-  local_file = "NSE_Market_Monitor.xlsx"
-  url = f"{GITHUB_RAW_BASE}/NSE_Market_Monitor.xlsx"
+  file_source = fetch_excel_file("NSE_Market_Monitor.xlsx")
+  if file_source is None:
+    return pd.DataFrame()
+
   try:
-    if os.path.exists(local_file):
-      df = pd.read_excel(local_file, sheet_name=0)
-    else:
-      df = pd.read_excel(url, sheet_name=0)
+    df = pd.read_excel(file_source, sheet_name=0)
     if "Date" in df.columns:
       df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime(
           "%Y-%m-%d"
       )
     return df
   except Exception as e:
-    st.error(f"Could not load Market Monitor file: {e}")
+    st.error(f"Could not parse Market Monitor file: {e}")
     return pd.DataFrame()
 
 
@@ -380,10 +408,12 @@ def load_market_monitor_data():
     show_spinner="📡 Fetching Sector Rotation & Heatmap tables...",
 )
 def load_sector_monitor_data():
-  local_file = "NSE_Sector_Monitor.xlsx"
-  url = f"{GITHUB_RAW_BASE}/NSE_Sector_Monitor.xlsx"
+  file_source = fetch_excel_file("NSE_Sector_Monitor.xlsx")
+  if file_source is None:
+    return pd.DataFrame(), pd.DataFrame()
+
   try:
-    xls = pd.ExcelFile(local_file if os.path.exists(local_file) else url)
+    xls = pd.ExcelFile(file_source)
     df_heat = (
         pd.read_excel(xls, sheet_name="Heatmap")
         if "Heatmap" in xls.sheet_names
@@ -400,7 +430,7 @@ def load_sector_monitor_data():
       ).dt.strftime("%Y-%m-%d")
     return df_heat, df_rot
   except Exception as e:
-    st.error(f"Could not load Sector Monitor file: {e}")
+    st.error(f"Could not parse Sector Monitor file: {e}")
     return pd.DataFrame(), pd.DataFrame()
 
 
@@ -2926,8 +2956,9 @@ with tab_market_health:
       )
     else:
       st.info(
-          "Market Monitor data not available yet. Ensure"
-          " `NSE_Market_Monitor.xlsx` exists in your repository root."
+          "Market Monitor data not available yet. If your repo is Private,"
+          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
+          " App Settings -> Secrets."
       )
 
   # ------------------------------------------
@@ -2953,8 +2984,9 @@ with tab_market_health:
       )
     else:
       st.info(
-          "Sector Heatmap data not available yet. Ensure"
-          " `NSE_Sector_Monitor.xlsx` exists in your repository root."
+          "Sector Heatmap data not available yet. If your repo is Private,"
+          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
+          " App Settings -> Secrets."
       )
 
   # ------------------------------------------
@@ -2980,8 +3012,9 @@ with tab_market_health:
       )
     else:
       st.info(
-          "Rotation Tracker data not available yet. Ensure"
-          " `NSE_Sector_Monitor.xlsx` exists in your repository root."
+          "Rotation Tracker data not available yet. If your repo is Private,"
+          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
+          " App Settings -> Secrets."
       )
 
   st.markdown("---")
