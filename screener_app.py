@@ -2151,18 +2151,26 @@ with tab_screener:
               " TV watchlist box to hot-swap 30 stocks at a time!"
           )
 
-          batch_cols = st.columns(min(len(batches), 4))
+          batch_labels = []
           for idx, b_list in enumerate(batches):
-            col_idx = idx % 4
-            with batch_cols[col_idx]:
-              start_num = idx * batch_size + 1
-              end_num = idx * batch_size + len(b_list)
-              st.markdown(f"**Batch {idx + 1} ({start_num}–{end_num})**")
-              st.code(", ".join(b_list), language="text")
+            start_num = idx * batch_size + 1
+            end_num = idx * batch_size + len(b_list)
+            batch_labels.append(f"Batch {idx + 1} ({start_num}–{end_num})")
 
-        st.markdown("#### 📋 Full Unbatched Ticker String")
-        tv_watchlist_string = ", ".join(filtered_symbols)
-        st.code(tv_watchlist_string, language="text")
+          selected_batch_label = st.selectbox(
+              "Select 30-Symbol Batch to Copy:",
+              options=batch_labels,
+              key=f"scan_batch_dropdown_{rc}_{sc}",
+          )
+          selected_idx = batch_labels.index(selected_batch_label)
+          st.code(", ".join(batches[selected_idx]), language="text")
+
+        with st.expander(
+            "📋 View / Copy All Tickers (Full Unbatched String)",
+            expanded=False,
+        ):
+          tv_watchlist_string = ", ".join(filtered_symbols)
+          st.code(tv_watchlist_string, language="text")
 
 # ==========================================
 # TAB 2: WATCHLIST STUDIO & TV FREE-TIER BRIDGE
@@ -2258,14 +2266,22 @@ with tab_watchlists:
         for i in range(0, len(current_symbols), batch_size)
     ]
 
-    batch_cols = st.columns(min(len(batches), 4))
-    for idx, b_list in enumerate(batches):
-      col_idx = idx % 4
-      with batch_cols[col_idx]:
+    if len(batches) > 1:
+      batch_labels = []
+      for idx, b_list in enumerate(batches):
         start_num = idx * batch_size + 1
         end_num = idx * batch_size + len(b_list)
-        st.markdown(f"**Batch {idx + 1} ({start_num}–{end_num})**")
-        st.code(", ".join(b_list), language="text")
+        batch_labels.append(f"Batch {idx + 1} ({start_num}–{end_num})")
+
+      selected_wl_batch_label = st.selectbox(
+          "Select 30-Symbol Batch to Copy:",
+          options=batch_labels,
+          key=f"wl_batch_select_{active_wl}",
+      )
+      selected_wl_idx = batch_labels.index(selected_wl_batch_label)
+      st.code(", ".join(batches[selected_wl_idx]), language="text")
+    else:
+      st.code(", ".join(current_symbols), language="text")
 
   with st.expander(
       "📥 Import / Paste Tickers & Backup Local Text (.TXT) Library",
