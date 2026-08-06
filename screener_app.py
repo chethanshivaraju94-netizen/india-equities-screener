@@ -510,6 +510,23 @@ def safe_map(styler, func, subset=None):
 
 def style_market_monitor(df):
   styler = df.style
+  format_dict = {}
+  for col in [
+      "5 Day Ratio",
+      "10 Day Ratio",
+      "A/D Ratio",
+      "Volume Breadth",
+      "> 200 SMA (%)",
+      "> 50 SMA (%)",
+      "> 20 EMA (%)",
+      "> 10 EMA (%)",
+      "Nifty 500 Close",
+      "Nifty 500 Chg %",
+  ]:
+    if col in df.columns:
+      format_dict[col] = "{:.2f}"
+  styler = styler.format(format_dict, na_rep="N/A")
+
   for c in ["Up 4% Today", "Advances", "52W Highs"]:
     if c in df.columns:
       max_v = 750 if c == "Advances" else 200
@@ -555,6 +572,12 @@ def style_market_monitor(df):
 
 def style_sector_heatmap(df):
   styler = df.style
+  format_dict = {}
+  for col in ["Close", "% Chg", "5D RS %", "21D RS %", "65D RS %", "% Off RS High"]:
+    if col in df.columns:
+      format_dict[col] = "{:.2f}"
+  styler = styler.format(format_dict, na_rep="N/A")
+
   vel_cols = [
       "5D Rank Velocity",
       "10D Rank Velocity",
@@ -736,6 +759,25 @@ def get_left_aligned_column_config(col_list):
       cfg[col] = st.column_config.Column(col, alignment="left", width=90)
     elif col in ["% of Sector Total", "% of Industry Total"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=145)
+    else:
+      cfg[col] = st.column_config.Column(col, alignment="left", width=110)
+  return cfg
+
+
+def get_styler_compatible_config(col_list):
+  """Configures column widths without NumberColumn(format=...) to preserve Styler RGB colors."""
+  cfg = {}
+  for col in col_list:
+    if col in ["Date", "Sector"]:
+      cfg[col] = st.column_config.Column(col, alignment="left", width=130)
+    elif "Rank Velocity" in col:
+      cfg[col] = st.column_config.Column(col, alignment="left", width=125)
+    elif "Rank" in col:
+      cfg[col] = st.column_config.Column(col, alignment="left", width=100)
+    elif "%" in col or "Ratio" in col or "Breadth" in col:
+      cfg[col] = st.column_config.Column(col, alignment="left", width=110)
+    elif "Close" in col:
+      cfg[col] = st.column_config.Column(col, alignment="left", width=115)
     else:
       cfg[col] = st.column_config.Column(col, alignment="left", width=110)
   return cfg
@@ -3136,7 +3178,7 @@ with tab_market_health:
           use_container_width=True,
           hide_index=True,
           height=520,
-          column_config=get_left_aligned_column_config(df_mm.columns),
+          column_config=get_styler_compatible_config(df_mm.columns),
       )
     else:
       st.info(
@@ -3165,7 +3207,7 @@ with tab_market_health:
           use_container_width=True,
           hide_index=True,
           height=580,
-          column_config=get_left_aligned_column_config(df_heat.columns),
+          column_config=get_styler_compatible_config(df_heat.columns),
       )
     else:
       st.info(
@@ -3194,7 +3236,7 @@ with tab_market_health:
           use_container_width=True,
           hide_index=True,
           height=580,
-          column_config=get_left_aligned_column_config(df_rot.columns),
+          column_config=get_styler_compatible_config(df_rot.columns),
       )
     else:
       st.info(
