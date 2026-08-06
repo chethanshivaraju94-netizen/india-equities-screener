@@ -435,6 +435,189 @@ def load_sector_monitor_data():
 
 
 # ==========================================
+# 0C. EXCEL COLOR SCALE GRADIENT ENGINE FOR TAB 3
+# ==========================================
+def color_scale_3pt(
+    val,
+    v_min,
+    v_mid,
+    v_max,
+    c_min=(248, 105, 107),
+    c_mid=(255, 255, 255),
+    c_max=(99, 190, 123),
+):
+  if pd.isna(val) or val == "" or str(val).strip() == "":
+    return ""
+  try:
+    v = float(val)
+  except Exception:
+    return ""
+
+  if v <= v_min:
+    r, g, b = c_min
+  elif v >= v_max:
+    r, g, b = c_max
+  elif v < v_mid:
+    ratio = (v - v_min) / max((v_mid - v_min), 1e-6)
+    r = int(c_min[0] + (c_mid[0] - c_min[0]) * ratio)
+    g = int(c_min[1] + (c_mid[1] - c_min[1]) * ratio)
+    b = int(c_min[2] + (c_mid[2] - c_min[2]) * ratio)
+  else:
+    ratio = (v - v_mid) / max((v_max - v_mid), 1e-6)
+    r = int(c_mid[0] + (c_max[0] - c_mid[0]) * ratio)
+    g = int(c_mid[1] + (c_max[1] - c_mid[1]) * ratio)
+    b = int(c_mid[2] + (c_max[2] - c_mid[2]) * ratio)
+  return f"background-color: #{r:02X}{g:02X}{b:02X}; color: #000000;"
+
+
+def color_scale_2pt(
+    val, v_min, v_max, c_min=(255, 255, 255), c_max=(99, 190, 123)
+):
+  if pd.isna(val) or val == "" or str(val).strip() == "":
+    return ""
+  try:
+    v = float(val)
+  except Exception:
+    return ""
+
+  if v <= v_min:
+    r, g, b = c_min
+  elif v >= v_max:
+    r, g, b = c_max
+  else:
+    ratio = (v - v_min) / max((v_max - v_min), 1e-6)
+    r = int(c_min[0] + (c_max[0] - c_min[0]) * ratio)
+    g = int(c_min[1] + (c_max[1] - c_min[1]) * ratio)
+    b = int(c_min[2] + (c_max[2] - c_min[2]) * ratio)
+  return f"background-color: #{r:02X}{g:02X}{b:02X}; color: #000000;"
+
+
+def color_binary_badge(val):
+  v_str = str(val).strip().lower()
+  if v_str in ["yes", "up"]:
+    return "background-color: #63BE7B; color: #000000; font-weight: bold;"
+  elif v_str in ["no", "down"]:
+    return "background-color: #F8696B; color: #000000; font-weight: bold;"
+  return ""
+
+
+def safe_map(styler, func, subset=None):
+  if hasattr(styler, "map"):
+    return styler.map(func, subset=subset)
+  else:
+    return styler.applymap(func, subset=subset)
+
+
+def style_market_monitor(df):
+  styler = df.style
+  for c in ["Up 4% Today", "Advances", "52W Highs"]:
+    if c in df.columns:
+      max_v = 750 if c == "Advances" else 200
+      styler = safe_map(
+          styler,
+          lambda v, mv=max_v: color_scale_2pt(
+              v, 0, mv, (255, 255, 255), (99, 190, 123)
+          ),
+          subset=[c],
+      )
+  for c in ["Down 4% Today", "Declines", "52W Lows"]:
+    if c in df.columns:
+      max_v = 750 if c == "Declines" else 200
+      styler = safe_map(
+          styler,
+          lambda v, mv=max_v: color_scale_2pt(
+              v, 0, mv, (255, 255, 255), (248, 105, 107)
+          ),
+          subset=[c],
+      )
+  for c in ["5 Day Ratio", "10 Day Ratio", "A/D Ratio", "Volume Breadth"]:
+    if c in df.columns:
+      styler = safe_map(
+          styler,
+          lambda v: color_scale_3pt(v, 0.5, 1.0, 2.0),
+          subset=[c],
+      )
+  for c in ["> 200 SMA (%)", "> 50 SMA (%)", "> 20 EMA (%)", "> 10 EMA (%)"]:
+    if c in df.columns:
+      styler = safe_map(
+          styler,
+          lambda v: color_scale_3pt(v, 0.0, 50.0, 100.0),
+          subset=[c],
+      )
+  if "Nifty 500 Chg %" in df.columns:
+    styler = safe_map(
+        styler,
+        lambda v: color_scale_3pt(v, -2.0, 0.0, 2.0),
+        subset=["Nifty 500 Chg %"],
+    )
+  return styler
+
+
+def style_sector_heatmap(df):
+  styler = df.style
+  vel_cols = [
+      "5D Rank Velocity",
+      "10D Rank Velocity",
+      "21D Rank Velocity",
+      "65D Rank Velocity",
+  ]
+  for c in vel_cols:
+    if c in df.columns:
+      styler = safe_map(
+          styler,
+          lambda v: color_scale_3pt(v, -10, 0, 10),
+          subset=[c],
+      )
+  rs_cols = ["5D RS %", "21D RS %", "65D RS %"]
+  for c in rs_cols:
+    if c in df.columns:
+      styler = safe_map(
+          styler,
+          lambda v: color_scale_3pt(v, -10, 0, 10),
+          subset=[c],
+      )
+  if "% Off RS High" in df.columns:
+    styler = safe_map(
+        styler,
+        lambda v: color_scale_3pt(v, -15.0, -5.0, 0.0),
+        subset=["% Off RS High"],
+    )
+  bin_cols = [
+      "RS Trend (>50 SMA)",
+      "> 10 EMA",
+      "> 20 EMA",
+      "> 50 SMA",
+      "> 200 SMA",
+  ]
+  for c in bin_cols:
+    if c in df.columns:
+      styler = safe_map(styler, color_binary_badge, subset=[c])
+  return styler
+
+
+def style_rotation_tracker(df):
+  styler = df.style
+  sec_cols = [c for c in df.columns if c != "Date"]
+  num_sec = max(len(sec_cols), 1)
+  mid_rank = max((num_sec // 2) + 1, 1)
+  for c in sec_cols:
+    styler = safe_map(
+        styler,
+        lambda v, ms=num_sec, mr=mid_rank: color_scale_3pt(
+            v,
+            1,
+            mr,
+            ms,
+            c_min=(99, 190, 123),
+            c_mid=(255, 255, 255),
+            c_max=(248, 105, 107),
+        ),
+        subset=[c],
+    )
+  return styler
+
+
+# ==========================================
 # VISUAL WATCHLIST COLOR DOT HELPER
 # ==========================================
 def get_wl_dots(symbol, watchlists_dict):
@@ -2947,8 +3130,9 @@ with tab_market_health:
       with c4:
         st.metric("A/D Ratio", f"{latest.get('A/D Ratio', 'N/A')}")
 
+      styled_mm = style_market_monitor(df_mm)
       st.dataframe(
-          df_mm,
+          styled_mm,
           use_container_width=True,
           hide_index=True,
           height=520,
@@ -2975,8 +3159,9 @@ with tab_market_health:
           " acceleration; Negative (-) indicate loss of relative momentum."
       )
 
+      styled_heat = style_sector_heatmap(df_heat)
       st.dataframe(
-          df_heat,
+          styled_heat,
           use_container_width=True,
           hide_index=True,
           height=580,
@@ -3003,8 +3188,9 @@ with tab_market_health:
           " (`^CRSLDX`)."
       )
 
+      styled_rot = style_rotation_tracker(df_rot)
       st.dataframe(
-          df_rot,
+          styled_rot,
           use_container_width=True,
           hide_index=True,
           height=580,
