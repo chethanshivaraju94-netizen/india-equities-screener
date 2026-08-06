@@ -120,6 +120,8 @@ def load_filter_presets():
           "min_above_52l": 20,
           "en_below_52h": True,
           "max_below_52h": 25,
+          "en_circuit": True,
+          "circuit_val": "5% Circuit Limit",
           "selected_perf_labels": [
               "1 Week",
               "1 Month",
@@ -161,6 +163,8 @@ def load_filter_presets():
           "min_above_52l": 30,
           "en_below_52h": True,
           "max_below_52h": 15,
+          "en_circuit": True,
+          "circuit_val": "5% Circuit Limit",
           "selected_perf_labels": ["1 Week", "1 Month", "3 Months"],
           "max_results": 4000,
           "ma_configs": default_ma_configs,
@@ -197,6 +201,8 @@ def load_filter_presets():
           "min_above_52l": 15,
           "en_below_52h": True,
           "max_below_52h": 35,
+          "en_circuit": False,
+          "circuit_val": "5% Circuit Limit",
           "selected_perf_labels": [
               "1 Month",
               "3 Months",
@@ -292,6 +298,56 @@ if "scan_sel_counter" not in st.session_state:
   st.session_state.scan_sel_counter = 0
 if "wl_sel_counter" not in st.session_state:
   st.session_state.wl_sel_counter = 0
+
+
+# ==========================================
+# 0B. HYBRID NSE CIRCUIT PRICE BAND CACHE
+# ==========================================
+@st.cache_data(ttl=43200, show_spinner="📡 Synchronizing Daily Circuit Price Bands...")
+def get_nse_circuit_bands():
+  symbol_to_band = {}
+  try:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    session = requests.Session()
+    session.headers.update(headers)
+    session.get("https://www.nseindia.com", timeout=5)
+    url = (
+        "https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O"
+    )
+    res = session.get(url, timeout=6)
+    if res.status_code == 200:
+      data = res.json()
+      for row in data.get("data", []):
+        sym = str(row.get("symbol", "")).strip().upper()
+        band_val = str(row.get("priceBand", "")).strip()
+        if sym and band_val:
+          symbol_to_band[sym] = band_val
+  except Exception:
+    pass
+
+  if not symbol_to_band:
+    try:
+      cdn_url = (
+          "https://raw.githubusercontent.com/datasets/nse-stocks/master/data/stock_metadata.json"
+      )
+      res_cdn = requests.get(cdn_url, timeout=5)
+      if res_cdn.status_code == 200:
+        for item in res_cdn.json():
+          sym = str(item.get("symbol", "")).strip().upper()
+          band_val = str(item.get("band", "")).strip()
+          if sym and band_val:
+            symbol_to_band[sym] = band_val
+    except Exception:
+      pass
+
+  return symbol_to_band
 
 
 # ==========================================
@@ -949,6 +1005,9 @@ def fetch_screener_data(
           "name",
           "close",
           "change",
+          "high",
+          "low",
+          "open",
           "volume",
           "market_cap_basic",
           tv_vol_col,
@@ -1114,6 +1173,10 @@ with col_load:
       st.session_state["f_min_52l"] = p.get("min_above_52l", 20)
       st.session_state["f_en_52h"] = p.get("en_below_52h", True)
       st.session_state["f_max_52h"] = p.get("max_below_52h", 30)
+      st.session_state["f_en_circuit"] = p.get("en_circuit", True)
+      st.session_state["f_circuit_val"] = p.get(
+          "circuit_val", "5% Circuit Limit"
+      )
       st.session_state["f_perf_labels"] = p.get(
           "selected_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]
       )
@@ -1159,6 +1222,10 @@ with col_update:
           "min_above_52l": st.session_state.get("f_min_52l", 20),
           "en_below_52h": st.session_state.get("f_en_52h", True),
           "max_below_52h": st.session_state.get("f_max_52h", 30),
+          "en_circuit": st.session_state.get("f_en_circuit", True),
+          "circuit_val": st.session_state.get(
+              "f_circuit_val", "5% Circuit Limit"
+          ),
           "selected_perf_labels": st.session_state.get(
               "f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]
           ),
@@ -1230,6 +1297,10 @@ with st.sidebar.expander("➕ Save Current Filters as New Preset"):
             "min_above_52l": st.session_state.get("f_min_52l", 20),
             "en_below_52h": st.session_state.get("f_en_52h", True),
             "max_below_52h": st.session_state.get("f_max_52h", 30),
+            "en_circuit": st.session_state.get("f_en_circuit", True),
+            "circuit_val": st.session_state.get(
+                "f_circuit_val", "5% Circuit Limit"
+            ),
             "selected_perf_labels": st.session_state.get(
                 "f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]
             ),
@@ -1552,6 +1623,32 @@ max_below_52h = st.sidebar.slider(
     disabled=not en_52h,
 )
 
+# ----------------------------------------------------
+# 4B. CIRCUIT LIMIT & FREEZE PROTECTION
+# ----------------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.header("4B. Circuit Limit Protection")
+
+c_cb, c_sb = st.sidebar.columns([1.1, 1.4])
+with c_cb:
+  en_circuit = st.checkbox(
+      "Exclude Circuit:",
+      value=st.session_state.get("f_en_circuit", True),
+      key="f_en_circuit",
+  )
+with c_sb:
+  circuit_options = ["2% Circuit Limit", "5% Circuit Limit", "10% Circuit Limit"]
+  circuit_choice = st.selectbox(
+      "Circuit Band",
+      options=circuit_options,
+      index=circuit_options.index(
+          st.session_state.get("f_circuit_val", "5% Circuit Limit")
+      ),
+      key="f_circuit_val",
+      disabled=not en_circuit,
+      label_visibility="collapsed",
+  )
+
 st.sidebar.markdown("---")
 st.sidebar.header("5. Performance % (Relative Strength)")
 perf_options = {
@@ -1632,6 +1729,7 @@ with tab_screener:
         ma_cols_to_fetch,
         max_results,
     )
+    nse_bands_map = get_nse_circuit_bands()
 
   if results_df.empty:
     st.warning(
@@ -1737,6 +1835,9 @@ with tab_screener:
         "market_cap_basic",
         "close",
         "change",
+        "high",
+        "low",
+        "open",
         "volume",
         tv_vol_col,
         "ADR",
@@ -1780,6 +1881,57 @@ with tab_screener:
       if pf["enabled"] and pf["col_name"] in df.columns:
         df[pf["col_name"]] = pd.to_numeric(df[pf["col_name"]], errors="coerce")
         df = df[df[pf["col_name"]] >= pf["min_val"]]
+
+    # ----------------------------------------------------
+    # HYBRID CIRCUIT LIMIT EXCLUSION (NSE API + FREEZE SAFEGUARD)
+    # ----------------------------------------------------
+    if en_circuit:
+      df["high"] = pd.to_numeric(df["high"], errors="coerce")
+      df["low"] = pd.to_numeric(df["low"], errors="coerce")
+      df["open"] = pd.to_numeric(df["open"], errors="coerce")
+      df["change_abs"] = df["change"].abs()
+
+      is_full_day_freeze = df["high"] == df["low"]
+      is_at_high_lock = (df["close"] == df["high"]) & (df["high"] > df["open"])
+      is_at_low_lock = (df["close"] == df["low"]) & (df["low"] < df["open"])
+      is_locked_extreme = is_at_high_lock | is_at_low_lock
+
+      is_2_pct_band = df["change_abs"].between(1.97, 2.00)
+      is_5_pct_band = df["change_abs"].between(4.97, 5.00)
+      is_10_pct_band = df["change_abs"].between(9.97, 10.00)
+
+      def is_circuit_hit(row):
+        sym = str(row["name"]).strip().upper()
+        band_val = nse_bands_map.get(sym, "")
+        c_abs = row["change_abs"]
+        is_locked = row["high"] == row["low"] or (
+            (row["close"] == row["high"] or row["close"] == row["low"])
+            and row["high"] != row["open"]
+        )
+
+        if circuit_choice == "2% Circuit Limit":
+          if band_val == "2" or (is_locked and 1.97 <= c_abs <= 2.00):
+            return True
+        elif circuit_choice == "5% Circuit Limit":
+          if band_val in ["2", "5"] or (
+              is_locked and (1.97 <= c_abs <= 2.00 or 4.97 <= c_abs <= 5.00)
+          ):
+            return True
+        elif circuit_choice == "10% Circuit Limit":
+          if band_val in ["2", "5", "10"] or (
+              is_locked
+              and (
+                  1.97 <= c_abs <= 2.00
+                  or 4.97 <= c_abs <= 5.00
+                  or 9.97 <= c_abs <= 10.00
+              )
+          ):
+            return True
+        return False
+
+      df["_is_circuit_excluded"] = df.apply(is_circuit_hit, axis=1)
+      df = df[~df["_is_circuit_excluded"] & ~is_full_day_freeze]
+      df = df.drop(columns=["_is_circuit_excluded"])
 
     if df.empty:
       st.warning(
