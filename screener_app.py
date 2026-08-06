@@ -263,21 +263,30 @@ def get_wl_dots(symbol, watchlists_dict):
     return "".join(dots)
 
 # ==========================================
-# LEFT-ALIGNED & SMART-SIZED TABLE CONFIG
+# LEFT-ALIGNED & SMART CONTENT-FIT TABLE CONFIG
 # ==========================================
 def get_left_aligned_column_config(col_list):
     cfg = {}
     for col in col_list:
         if col == "TV_Link":
-            cfg[col] = st.column_config.LinkColumn("TradingView", display_text="↗️ Chart", alignment="left", width="small")
+            cfg[col] = st.column_config.LinkColumn("TradingView", display_text="↗️ Chart", alignment="left", width=80)
         elif col == "Screener_Link":
-            cfg[col] = st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener", alignment="left", width="small")
-        elif col in ["S.No.", "IPO Date"]:
-            cfg[col] = st.column_config.Column(col, alignment="left", width="small")
+            cfg[col] = st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener", alignment="left", width=90)
+        elif col in ["S.No.", "S.No._num"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=70)
         elif col in ["TV_Symbol", "name", "Sector", "Industry", "Basic Industry"]:
-            cfg[col] = st.column_config.Column(col, alignment="left", width="medium")
+            # width=None triggers Streamlit's native Content-Based Auto-Fit (Fit Text to Column)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=None)
+        elif col in ["Close", "Change %", "ADR %", "EPS Q YoY %", "Sales Q YoY %", "IPO Date"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=95)
+        elif "Perf %" in col or "EMA" in col or "SMA" in col:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=85)
+        elif col in ["Market Cap (₹ Cr)", "val_traded_inr", "Number of Stocks Passed", "% Share of Passed Stocks"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=120)
+        elif "% of Stocks Passed" in col:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=190)
         else:
-            cfg[col] = st.column_config.Column(col, alignment="left", width="small")
+            cfg[col] = st.column_config.Column(col, alignment="left", width=None)
     return cfg
 
 # ==========================================
