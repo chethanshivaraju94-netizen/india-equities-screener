@@ -2147,8 +2147,8 @@ with tab_screener:
           st.markdown("#### ⚡ 30-Symbol TradingView Hot-Swap Batches")
           st.caption(
               "💡 **Free Tier Bypass Workflow:** In TradingView, press **`Ctrl+A`**"
-              " $\\rightarrow$ **`Backspace`** $\\rightarrow$ **`Ctrl+V`** in your"
-              " TV watchlist box to hot-swap 30 stocks at a time!"
+              " → **`Backspace`** → **`Ctrl+V`** in your TV watchlist box to"
+              " hot-swap 30 stocks at a time!"
           )
 
           batch_labels = []
@@ -2249,39 +2249,6 @@ with tab_watchlists:
         st.rerun()
 
   current_symbols = st.session_state.watchlists[active_wl]
-
-  if current_symbols:
-    st.markdown("---")
-    st.markdown("#### ⚡ 30-Symbol TradingView Hot-Swap Batches")
-    st.caption(
-        "💡 **Free Tier Bypass Workflow:** In TradingView, keep **ONE** empty"
-        " custom watchlist. Click any 30-stock batch below, press **`Ctrl+A`**"
-        " $\\rightarrow$ **`Backspace`** $\\rightarrow$ **`Ctrl+V`** in your TV"
-        " watchlist box to instantly swap and scan with your keyboard **`↓`** key!"
-    )
-
-    batch_size = 30
-    batches = [
-        current_symbols[i : i + batch_size]
-        for i in range(0, len(current_symbols), batch_size)
-    ]
-
-    if len(batches) > 1:
-      batch_labels = []
-      for idx, b_list in enumerate(batches):
-        start_num = idx * batch_size + 1
-        end_num = idx * batch_size + len(b_list)
-        batch_labels.append(f"Batch {idx + 1} ({start_num}–{end_num})")
-
-      selected_wl_batch_label = st.selectbox(
-          "Select 30-Symbol Batch to Copy:",
-          options=batch_labels,
-          key=f"wl_batch_select_{active_wl}",
-      )
-      selected_wl_idx = batch_labels.index(selected_wl_batch_label)
-      st.code(", ".join(batches[selected_wl_idx]), language="text")
-    else:
-      st.code(", ".join(current_symbols), language="text")
 
   with st.expander(
       "📥 Import / Paste Tickers & Backup Local Text (.TXT) Library",
@@ -2587,3 +2554,40 @@ with tab_watchlists:
         save_watchlists(st.session_state.watchlists)
         st.success(f"✅ Promoted {cnt} stocks to **{promo_target}**!")
         st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### ⚡ 30-Symbol TradingView Hot-Swap Batches")
+    st.caption(
+        "💡 **Free Tier Bypass Workflow:** In TradingView, press **`Ctrl+A`**"
+        " → **`Backspace`** → **`Ctrl+V`** in your TV watchlist box to"
+        " hot-swap 30 stocks at a time!"
+    )
+
+    batch_size = 30
+    batches = [
+        current_symbols[i : i + batch_size]
+        for i in range(0, len(current_symbols), batch_size)
+    ]
+
+    if len(batches) > 1:
+      batch_labels = []
+      for idx, b_list in enumerate(batches):
+        start_num = idx * batch_size + 1
+        end_num = idx * batch_size + len(b_list)
+        batch_labels.append(f"Batch {idx + 1} ({start_num}–{end_num})")
+
+      selected_wl_batch_label = st.selectbox(
+          "Select 30-Symbol Batch to Copy:",
+          options=batch_labels,
+          key=f"wl_batch_select_{active_wl}_{wsc}",
+      )
+      selected_wl_idx = batch_labels.index(selected_wl_batch_label)
+      st.code(", ".join(batches[selected_wl_idx]), language="text")
+    else:
+      st.code(", ".join(current_symbols), language="text")
+
+    with st.expander(
+        "📋 View / Copy All Tickers (Full Unbatched String)",
+        expanded=False,
+    ):
+      st.code(", ".join(current_symbols), language="text")
