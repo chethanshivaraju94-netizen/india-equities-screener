@@ -495,9 +495,9 @@ def color_scale_2pt(
 def color_binary_badge(val):
   v_str = str(val).strip().lower()
   if v_str in ["yes", "up"]:
-    return "background-color: #63BE7B; color: #000000;"
+    return "background-color: #63BE7B; color: #000000; font-weight: bold;"
   elif v_str in ["no", "down"]:
-    return "background-color: #F8696B; color: #000000;"
+    return "background-color: #F8696B; color: #000000; font-weight: bold;"
   return ""
 
 
@@ -3166,11 +3166,7 @@ with tab_market_health:
         st.metric("A/D Ratio", f"{latest.get('A/D Ratio', 'N/A')}")
 
       styled_mm = style_market_monitor(df_mm)
-      st.dataframe(
-          styled_mm,
-          use_container_width=True,
-          height=520,
-      )
+      st.table(styled_mm)
     else:
       st.info(
           "Market Monitor data not available yet. If your repo is Private,"
@@ -3193,11 +3189,7 @@ with tab_market_health:
       )
 
       styled_heat = style_sector_heatmap(df_heat)
-      st.dataframe(
-          styled_heat,
-          use_container_width=True,
-          height=580,
-      )
+      st.table(styled_heat)
     else:
       st.info(
           "Sector Heatmap data not available yet. If your repo is Private,"
@@ -3220,11 +3212,7 @@ with tab_market_health:
       )
 
       styled_rot = style_rotation_tracker(df_rot)
-      st.dataframe(
-          styled_rot,
-          use_container_width=True,
-          height=580,
-      )
+      st.table(styled_rot)
     else:
       st.info(
           "Rotation Tracker data not available yet. If your repo is Private,"
