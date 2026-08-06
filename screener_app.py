@@ -302,20 +302,23 @@ if "wl_sel_counter" not in st.session_state:
 
 
 # ==========================================
-# 0B. AUTHENTICATED EXCEL LOADER & NSE BANDS CACHE
+# 0B. AUTHENTICATED EXCEL LOADER (3-TIER AUTH & RETRY)
 # ==========================================
 def fetch_excel_file(filename):
   if os.path.exists(filename):
     return filename
 
-  headers = {
-      "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
-          " like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      )
-  }
+  headers_list = []
   if GITHUB_TOKEN:
-    headers["Authorization"] = f"token {GITHUB_TOKEN}"
+    headers_list.append({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+    })
+    headers_list.append({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Authorization": f"token {GITHUB_TOKEN}",
+    })
+  headers_list.append({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
 
   repos = [
       "chethanshivaraju94-netizen/nse-market-monitor",
@@ -326,12 +329,13 @@ def fetch_excel_file(filename):
   for repo in repos:
     for branch in branches:
       url = f"https://raw.githubusercontent.com/{repo}/{branch}/{filename}"
-      try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-          return io.BytesIO(res.content)
-      except Exception:
-        pass
+      for headers in headers_list:
+        try:
+          res = requests.get(url, headers=headers, timeout=10)
+          if res.status_code == 200:
+            return io.BytesIO(res.content)
+        except Exception:
+          pass
 
   return None
 
@@ -3173,6 +3177,13 @@ with tab_market_health:
           " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
           " App Settings -> Secrets."
       )
+      if st.button(
+          "🔄 Retry Fetching Market Monitor Now",
+          key="retry_mm_btn",
+          type="primary",
+      ):
+        load_market_monitor_data.clear()
+        st.rerun()
 
   # ------------------------------------------
   # TAB 3B: SECTOR RS HEATMAP
@@ -3196,6 +3207,13 @@ with tab_market_health:
           " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
           " App Settings -> Secrets."
       )
+      if st.button(
+          "🔄 Retry Fetching Sector Data Now",
+          key="retry_sec_btn",
+          type="primary",
+      ):
+        load_sector_monitor_data.clear()
+        st.rerun()
 
   # ------------------------------------------
   # TAB 3C: HISTORICAL ROTATION TRACKER
@@ -3219,6 +3237,13 @@ with tab_market_health:
           " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
           " App Settings -> Secrets."
       )
+      if st.button(
+          "🔄 Retry Fetching Rotation Data Now",
+          key="retry_rot_btn",
+          type="primary",
+      ):
+        load_sector_monitor_data.clear()
+        st.rerun()
 
   st.markdown("---")
   with st.expander(
