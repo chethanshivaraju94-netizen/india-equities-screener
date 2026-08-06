@@ -495,9 +495,9 @@ def color_scale_2pt(
 def color_binary_badge(val):
   v_str = str(val).strip().lower()
   if v_str in ["yes", "up"]:
-    return "background-color: #63BE7B; color: #000000; font-weight: bold;"
+    return "background-color: #63BE7B; color: #000000;"
   elif v_str in ["no", "down"]:
-    return "background-color: #F8696B; color: #000000; font-weight: bold;"
+    return "background-color: #F8696B; color: #000000;"
   return ""
 
 
@@ -567,6 +567,10 @@ def style_market_monitor(df):
         lambda v: color_scale_3pt(v, -2.0, 0.0, 2.0),
         subset=["Nifty 500 Chg %"],
     )
+  try:
+    styler = styler.hide(axis="index")
+  except Exception:
+    pass
   return styler
 
 
@@ -615,6 +619,10 @@ def style_sector_heatmap(df):
   for c in bin_cols:
     if c in df.columns:
       styler = safe_map(styler, color_binary_badge, subset=[c])
+  try:
+    styler = styler.hide(axis="index")
+  except Exception:
+    pass
   return styler
 
 
@@ -637,6 +645,10 @@ def style_rotation_tracker(df):
         ),
         subset=[c],
     )
+  try:
+    styler = styler.hide(axis="index")
+  except Exception:
+    pass
   return styler
 
 
@@ -759,25 +771,6 @@ def get_left_aligned_column_config(col_list):
       cfg[col] = st.column_config.Column(col, alignment="left", width=90)
     elif col in ["% of Sector Total", "% of Industry Total"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=145)
-    else:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=110)
-  return cfg
-
-
-def get_styler_compatible_config(col_list):
-  """Configures column widths without NumberColumn(format=...) to preserve Styler RGB colors."""
-  cfg = {}
-  for col in col_list:
-    if col in ["Date", "Sector"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=130)
-    elif "Rank Velocity" in col:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=125)
-    elif "Rank" in col:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=100)
-    elif "%" in col or "Ratio" in col or "Breadth" in col:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=110)
-    elif "Close" in col:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=115)
     else:
       cfg[col] = st.column_config.Column(col, alignment="left", width=110)
   return cfg
@@ -3176,9 +3169,7 @@ with tab_market_health:
       st.dataframe(
           styled_mm,
           use_container_width=True,
-          hide_index=True,
           height=520,
-          column_config=get_styler_compatible_config(df_mm.columns),
       )
     else:
       st.info(
@@ -3205,9 +3196,7 @@ with tab_market_health:
       st.dataframe(
           styled_heat,
           use_container_width=True,
-          hide_index=True,
           height=580,
-          column_config=get_styler_compatible_config(df_heat.columns),
       )
     else:
       st.info(
@@ -3234,9 +3223,7 @@ with tab_market_health:
       st.dataframe(
           styled_rot,
           use_container_width=True,
-          hide_index=True,
           height=580,
-          column_config=get_styler_compatible_config(df_rot.columns),
       )
     else:
       st.info(
