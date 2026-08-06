@@ -263,31 +263,39 @@ def get_wl_dots(symbol, watchlists_dict):
     return "".join(dots)
 
 # ==========================================
-# 100% LEFT-ALIGNED & STRICT INTEGER PIXEL SIZING
+# PRECISION CONTENT-FIT TABLE CONFIGURATION
 # ==========================================
 def get_left_aligned_column_config(col_list):
     cfg = {}
     for col in col_list:
         if col == "TV_Link":
-            cfg[col] = st.column_config.LinkColumn("TradingView", display_text="↗️ Chart", alignment="left", width=80)
+            cfg[col] = st.column_config.LinkColumn("TradingView", display_text="↗️ Chart", alignment="left", width=85)
         elif col == "Screener_Link":
             cfg[col] = st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener", alignment="left", width=90)
         elif col in ["S.No.", "S.No._num"]:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=70)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=75)
         elif col == "TV_Symbol":
-            cfg[col] = st.column_config.Column(col, alignment="left", width=115)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=135)
         elif col == "name":
-            cfg[col] = st.column_config.Column(col, alignment="left", width=130)
-        elif col in ["Sector", "Industry", "Basic Industry"]:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=160)
-        elif col in ["Close", "Change %", "ADR %", "EPS Q YoY %", "Sales Q YoY %", "IPO Date"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=120)
+        elif col in ["Sector", "Basic Industry"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=220)
+        elif col == "Industry":
+            cfg[col] = st.column_config.Column(col, alignment="left", width=240)
+        elif col in ["Close", "Change %", "ADR %"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=75)
+        elif col in ["EPS Q YoY %", "Sales Q YoY %", "IPO Date"]:
             cfg[col] = st.column_config.Column(col, alignment="left", width=95)
         elif "Perf %" in col or "EMA" in col or "SMA" in col:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=85)
-        elif col in ["Market Cap (₹ Cr)", "val_traded_inr", "Number of Stocks Passed", "% Share of Passed Stocks"]:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=120)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=80)
+        elif col == "Market Cap (₹ Cr)":
+            cfg[col] = st.column_config.Column(col, alignment="left", width=115)
+        elif "Close×AvgVol" in col:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=145)
+        elif col in ["Number of Stocks Passed", "% Share of Passed Stocks"]:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=145)
         elif "% of Stocks Passed" in col:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=180)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=260)
         else:
             cfg[col] = st.column_config.Column(col, alignment="left", width=100)
     return cfg
@@ -1269,7 +1277,7 @@ with tab_screener:
                     fig_sec.update_layout(annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)], showlegend=False, margin=dict(t=20, b=10, l=20, r=20), height=360)
                     chart_ev_sec = st.plotly_chart(fig_sec, use_container_width=True, on_select="rerun", selection_mode="points", key=f"sec_chart_{rc}")
                 with c_table1:
-                    # use_container_width=False stops 4 columns from stretching across ultra-wide monitors
+                    # use_container_width=False prevents 4 columns from stretching across ultra-wide monitors
                     table_ev_sec = st.dataframe(
                         sec_counts, 
                         use_container_width=False, 
@@ -1306,7 +1314,7 @@ with tab_screener:
                     fig_ind.update_layout(annotations=[dict(text=f"<b>Total Stocks:<br>{ind_total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)], showlegend=False, margin=dict(t=20, b=10, l=20, r=20), height=360)
                     chart_ev_ind = st.plotly_chart(fig_ind, use_container_width=True, on_select="rerun", selection_mode="points", key=f"ind_chart_{rc}_{sec_hash}")
                 with c_table2:
-                    # use_container_width=False stops 4 columns from stretching across ultra-wide monitors
+                    # use_container_width=False prevents 4 columns from stretching across ultra-wide monitors
                     table_ev_ind = st.dataframe(
                         ind_counts, 
                         use_container_width=False, 
