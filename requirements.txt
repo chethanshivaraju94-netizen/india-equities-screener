@@ -6,3 +6,6 @@ tradingview-screener
 plotly
 streamlit-sortables
 openpyxl
+beautifulsoup4
+google-genai
+markdown
