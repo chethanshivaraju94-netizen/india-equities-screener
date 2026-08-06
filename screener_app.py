@@ -263,7 +263,7 @@ def get_wl_dots(symbol, watchlists_dict):
     return "".join(dots)
 
 # ==========================================
-# PRECISION CONTENT-FIT TABLE CONFIGURATION
+# 100% LEFT-ALIGNED & ZERO-TRUNCATION TABLE CONFIG
 # ==========================================
 def get_left_aligned_column_config(col_list):
     cfg = {}
@@ -271,33 +271,35 @@ def get_left_aligned_column_config(col_list):
         if col == "TV_Link":
             cfg[col] = st.column_config.LinkColumn("TradingView", display_text="↗️ Chart", alignment="left", width=85)
         elif col == "Screener_Link":
-            cfg[col] = st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener", alignment="left", width=90)
+            cfg[col] = st.column_config.LinkColumn("Screener.in", display_text="↗️ Screener", alignment="left", width=95)
         elif col in ["S.No.", "S.No._num"]:
             cfg[col] = st.column_config.Column(col, alignment="left", width=75)
         elif col == "TV_Symbol":
             cfg[col] = st.column_config.Column(col, alignment="left", width=135)
         elif col == "name":
-            cfg[col] = st.column_config.Column(col, alignment="left", width=120)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=125)
         elif col in ["Sector", "Basic Industry"]:
             cfg[col] = st.column_config.Column(col, alignment="left", width=220)
         elif col == "Industry":
-            cfg[col] = st.column_config.Column(col, alignment="left", width=240)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=250)
         elif col in ["Close", "Change %", "ADR %"]:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=75)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=85)
         elif col in ["EPS Q YoY %", "Sales Q YoY %", "IPO Date"]:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=95)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=110)
         elif "Perf %" in col or "EMA" in col or "SMA" in col:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=80)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=85)
         elif col == "Market Cap (₹ Cr)":
-            cfg[col] = st.column_config.Column(col, alignment="left", width=115)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=130)
         elif "Close×AvgVol" in col:
+            cfg[col] = st.column_config.Column(col, alignment="left", width=150)
+        elif col == "Stocks Passed":
+            cfg[col] = st.column_config.Column(col, alignment="left", width=115)
+        elif col == "% Share":
+            cfg[col] = st.column_config.Column(col, alignment="left", width=90)
+        elif col in ["% of Sector Total", "% of Industry Total"]:
             cfg[col] = st.column_config.Column(col, alignment="left", width=145)
-        elif col in ["Number of Stocks Passed", "% Share of Passed Stocks"]:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=145)
-        elif "% of Stocks Passed" in col:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=260)
         else:
-            cfg[col] = st.column_config.Column(col, alignment="left", width=100)
+            cfg[col] = st.column_config.Column(col, alignment="left", width=110)
     return cfg
 
 # ==========================================
@@ -1265,22 +1267,21 @@ with tab_screener:
             
             with tab_sector_sum:
                 sec_counts = df['Sector'].value_counts().reset_index()
-                sec_counts.columns = ['Sector', 'Number of Stocks Passed']
-                sec_counts['% Share of Passed Stocks'] = ((sec_counts['Number of Stocks Passed'] / total_passed) * 100).round(1)
-                sec_counts['% of Stocks Passed Amongst Total Stocks in the Sector'] = sec_counts.apply(
-                    lambda r: round((r['Number of Stocks Passed'] / total_sector_counts.get(r['Sector'], 1)) * 100, 1), axis=1
+                sec_counts.columns = ['Sector', 'Stocks Passed', '% Share', '% of Sector Total']
+                sec_counts['% Share'] = ((sec_counts['Stocks Passed'] / total_passed) * 100).round(1)
+                sec_counts['% of Sector Total'] = sec_counts.apply(
+                    lambda r: round((r['Stocks Passed'] / total_sector_counts.get(r['Sector'], 1)) * 100, 1), axis=1
                 )
                 c_chart1, c_table1 = st.columns([1.1, 1.3])
                 with c_chart1:
-                    fig_sec = px.pie(sec_counts, names='Sector', values='Number of Stocks Passed', hole=0.55)
+                    fig_sec = px.pie(sec_counts, names='Sector', values='Stocks Passed', hole=0.55)
                     fig_sec.update_traces(textinfo='percent', textposition='inside')
                     fig_sec.update_layout(annotations=[dict(text=f"<b>Total Stocks:<br>{total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)], showlegend=False, margin=dict(t=20, b=10, l=20, r=20), height=360)
                     chart_ev_sec = st.plotly_chart(fig_sec, use_container_width=True, on_select="rerun", selection_mode="points", key=f"sec_chart_{rc}")
                 with c_table1:
-                    # use_container_width=False prevents 4 columns from stretching across ultra-wide monitors
                     table_ev_sec = st.dataframe(
                         sec_counts, 
-                        use_container_width=False, 
+                        use_container_width=True, 
                         hide_index=True, 
                         height=360, 
                         on_select="rerun", 
@@ -1301,23 +1302,22 @@ with tab_screener:
                     df_ind_source = df
                     ind_total_passed = total_passed
                 ind_counts = df_ind_source['Industry'].value_counts().reset_index()
-                ind_counts.columns = ['Basic Industry', 'Number of Stocks Passed']
-                ind_counts['% Share of Passed Stocks'] = ((ind_counts['Number of Stocks Passed'] / max(ind_total_passed, 1)) * 100).round(1)
-                ind_counts['% of Stocks Passed Amongst Total Stocks in the Industry'] = ind_counts.apply(
-                    lambda r: round((r['Number of Stocks Passed'] / total_industry_counts.get(r['Basic Industry'], 1)) * 100, 1), axis=1
+                ind_counts.columns = ['Basic Industry', 'Stocks Passed', '% Share', '% of Industry Total']
+                ind_counts['% Share'] = ((ind_counts['Stocks Passed'] / max(ind_total_passed, 1)) * 100).round(1)
+                ind_counts['% of Industry Total'] = ind_counts.apply(
+                    lambda r: round((r['Stocks Passed'] / total_industry_counts.get(r['Basic Industry'], 1)) * 100, 1), axis=1
                 )
                 sec_hash = "_".join(sorted(active_sectors)) if active_sectors else "all"
                 c_chart2, c_table2 = st.columns([1.1, 1.3])
                 with c_chart2:
-                    fig_ind = px.pie(ind_counts, names='Basic Industry', values='Number of Stocks Passed', hole=0.55)
+                    fig_ind = px.pie(ind_counts, names='Basic Industry', values='Stocks Passed', hole=0.55)
                     fig_ind.update_traces(textinfo='percent', textposition='inside')
                     fig_ind.update_layout(annotations=[dict(text=f"<b>Total Stocks:<br>{ind_total_passed}</b>", x=0.5, y=0.5, font_size=16, showarrow=False)], showlegend=False, margin=dict(t=20, b=10, l=20, r=20), height=360)
                     chart_ev_ind = st.plotly_chart(fig_ind, use_container_width=True, on_select="rerun", selection_mode="points", key=f"ind_chart_{rc}_{sec_hash}")
                 with c_table2:
-                    # use_container_width=False prevents 4 columns from stretching across ultra-wide monitors
                     table_ev_ind = st.dataframe(
                         ind_counts, 
-                        use_container_width=False, 
+                        use_container_width=True, 
                         hide_index=True, 
                         height=360, 
                         on_select="rerun", 
