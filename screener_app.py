@@ -121,7 +121,7 @@ def load_filter_presets():
           "en_below_52h": True,
           "max_below_52h": 25,
           "en_circuit": True,
-          "circuit_val": "5% Circuit Limit",
+          "circuit_val": ["2%", "5%", "10%"],
           "selected_perf_labels": [
               "1 Week",
               "1 Month",
@@ -164,7 +164,7 @@ def load_filter_presets():
           "en_below_52h": True,
           "max_below_52h": 15,
           "en_circuit": True,
-          "circuit_val": "5% Circuit Limit",
+          "circuit_val": ["2%", "5%", "10%"],
           "selected_perf_labels": ["1 Week", "1 Month", "3 Months"],
           "max_results": 4000,
           "ma_configs": default_ma_configs,
@@ -202,7 +202,7 @@ def load_filter_presets():
           "en_below_52h": True,
           "max_below_52h": 35,
           "en_circuit": False,
-          "circuit_val": "5% Circuit Limit",
+          "circuit_val": ["2%", "5%", "10%"],
           "selected_perf_labels": [
               "1 Month",
               "3 Months",
@@ -1174,9 +1174,12 @@ with col_load:
       st.session_state["f_en_52h"] = p.get("en_below_52h", True)
       st.session_state["f_max_52h"] = p.get("max_below_52h", 30)
       st.session_state["f_en_circuit"] = p.get("en_circuit", True)
-      st.session_state["f_circuit_val"] = p.get(
-          "circuit_val", "5% Circuit Limit"
-      )
+
+      c_val = p.get("circuit_val", ["2%", "5%", "10%"])
+      if isinstance(c_val, str):
+        c_val = ["2%", "5%", "10%"]
+      st.session_state["f_circuit_val"] = c_val
+
       st.session_state["f_perf_labels"] = p.get(
           "selected_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]
       )
@@ -1224,7 +1227,7 @@ with col_update:
           "max_below_52h": st.session_state.get("f_max_52h", 30),
           "en_circuit": st.session_state.get("f_en_circuit", True),
           "circuit_val": st.session_state.get(
-              "f_circuit_val", "5% Circuit Limit"
+              "f_circuit_val", ["2%", "5%", "10%"]
           ),
           "selected_perf_labels": st.session_state.get(
               "f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]
@@ -1299,7 +1302,7 @@ with st.sidebar.expander("➕ Save Current Filters as New Preset"):
             "max_below_52h": st.session_state.get("f_max_52h", 30),
             "en_circuit": st.session_state.get("f_en_circuit", True),
             "circuit_val": st.session_state.get(
-                "f_circuit_val", "5% Circuit Limit"
+                "f_circuit_val", ["2%", "5%", "10%"]
             ),
             "selected_perf_labels": st.session_state.get(
                 "f_perf_labels", ["1 Week", "1 Month", "3 Months", "6 Months"]
@@ -1624,7 +1627,7 @@ max_below_52h = st.sidebar.slider(
 )
 
 # ----------------------------------------------------
-# 4B. CIRCUIT LIMIT & FREEZE PROTECTION
+# 4B. CIRCUIT LIMIT & FREEZE PROTECTION (MULTI-SELECT)
 # ----------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.header("4B. Circuit Limit Protection")
@@ -1637,16 +1640,19 @@ with c_cb:
       key="f_en_circuit",
   )
 with c_sb:
-  circuit_options = ["2% Circuit Limit", "5% Circuit Limit", "10% Circuit Limit"]
-  circuit_choice = st.selectbox(
-      "Circuit Band",
+  circuit_options = ["2%", "5%", "10%"]
+  default_circuits = st.session_state.get("f_circuit_val", ["2%", "5%", "10%"])
+  if isinstance(default_circuits, str):
+    default_circuits = ["2%", "5%", "10%"]
+
+  circuit_choice = st.multiselect(
+      "Circuit Bands to Exclude:",
       options=circuit_options,
-      index=circuit_options.index(
-          st.session_state.get("f_circuit_val", "5% Circuit Limit")
-      ),
+      default=default_circuits,
       key="f_circuit_val",
       disabled=not en_circuit,
       label_visibility="collapsed",
+      placeholder="Select bands...",
   )
 
 st.sidebar.markdown("---")
@@ -1883,9 +1889,9 @@ with tab_screener:
         df = df[df[pf["col_name"]] >= pf["min_val"]]
 
     # ----------------------------------------------------
-    # HYBRID CIRCUIT LIMIT EXCLUSION (NSE API + FREEZE SAFEGUARD)
+    # HYBRID CIRCUIT LIMIT EXCLUSION (MULTI-SELECT SUPPORT)
     # ----------------------------------------------------
-    if en_circuit:
+    if en_circuit and circuit_choice:
       df["high"] = pd.to_numeric(df["high"], errors="coerce")
       df["low"] = pd.to_numeric(df["low"], errors="coerce")
       df["open"] = pd.to_numeric(df["open"], errors="coerce")
@@ -1896,9 +1902,7 @@ with tab_screener:
       is_at_low_lock = (df["close"] == df["low"]) & (df["low"] < df["open"])
       is_locked_extreme = is_at_high_lock | is_at_low_lock
 
-      is_2_pct_band = df["change_abs"].between(1.97, 2.00)
-      is_5_pct_band = df["change_abs"].between(4.97, 5.00)
-      is_10_pct_band = df["change_abs"].between(9.97, 10.00)
+      selected_band_nums = [b.replace("%", "") for b in circuit_choice]
 
       def is_circuit_hit(row):
         sym = str(row["name"]).strip().upper()
@@ -1909,24 +1913,17 @@ with tab_screener:
             and row["high"] != row["open"]
         )
 
-        if circuit_choice == "2% Circuit Limit":
-          if band_val == "2" or (is_locked and 1.97 <= c_abs <= 2.00):
+        if band_val in selected_band_nums:
+          return True
+
+        if is_locked:
+          if "2" in selected_band_nums and 1.97 <= c_abs <= 2.00:
             return True
-        elif circuit_choice == "5% Circuit Limit":
-          if band_val in ["2", "5"] or (
-              is_locked and (1.97 <= c_abs <= 2.00 or 4.97 <= c_abs <= 5.00)
-          ):
+          if "5" in selected_band_nums and 4.97 <= c_abs <= 5.00:
             return True
-        elif circuit_choice == "10% Circuit Limit":
-          if band_val in ["2", "5", "10"] or (
-              is_locked
-              and (
-                  1.97 <= c_abs <= 2.00
-                  or 4.97 <= c_abs <= 5.00
-                  or 9.97 <= c_abs <= 10.00
-              )
-          ):
+          if "10" in selected_band_nums and 9.97 <= c_abs <= 10.00:
             return True
+
         return False
 
       df["_is_circuit_excluded"] = df.apply(is_circuit_hit, axis=1)
