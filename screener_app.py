@@ -435,174 +435,221 @@ def load_sector_monitor_data():
 
 
 # ==========================================
-# 0C. SITUATIONAL AWARENESS ENGINE FOR TAB 3
+# 0C. EXCEL COLOR SCALE GRADIENT ENGINE FOR TAB 3
 # ==========================================
-def generate_market_awareness(df_mm):
-  if df_mm is None or df_mm.empty or len(df_mm) < 3:
-    return {
-        "state": "🔄 Initializing Data...",
-        "breakout_cond": "Waiting for Market Monitor history...",
-        "pullback_cond": "Waiting for Market Monitor history...",
-        "consolidation_cond": "Waiting for Market Monitor history...",
-        "action": (
-            "Ensure NSE_Market_Monitor.xlsx is present in your repo or Gist."
-        ),
-    }
+def color_scale_3pt(
+    val,
+    v_min,
+    v_mid,
+    v_max,
+    c_min=(248, 105, 107),
+    c_mid=(255, 255, 255),
+    c_max=(99, 190, 123),
+):
+  if pd.isna(val) or val == "" or str(val).strip() == "":
+    return ""
+  try:
+    v = float(val)
+  except Exception:
+    return ""
 
-  curr = df_mm.iloc[0]
-  prev = df_mm.iloc[1] if len(df_mm) > 1 else curr
-
-  r5 = float(curr.get("5 Day Ratio", 1.0))
-  r10 = float(curr.get("10 Day Ratio", 1.0))
-  sma50 = float(curr.get("> 50 SMA (%)", 50.0))
-
-  if r5 >= 2.0 and r10 >= 1.5 and sma50 >= 55.0:
-    state = "🚀 Confirmed Uptrend (Strong Thrust & Breadth Expansion)"
-    breakout_cond = (
-        "🟢 YES — Highly conducive to CAN SLIM / VCP base breakouts."
-    )
-    pullback_cond = (
-        "🟢 YES — Leaders pulling back to 10/20 EMA should be bought."
-    )
-    consolidation_cond = (
-        "🔴 NO — Do not wait for deep consolidations; leading stocks are"
-        " moving."
-    )
-    action = (
-        "1. **Aggressive Deployment:** Take high-quality breakouts with volume"
-        " surges.\n2. **Leader Focus:** Concentrated exposure in Rank 1–5"
-        " sectors.\n3. **Stop Management:** Trail winning positions using"
-        " 10-day or 20-day EMA."
-    )
-  elif r5 >= 1.0 and sma50 >= 45.0:
-    state = "⚖️ Constructive Pullback & Sector Rotation"
-    breakout_cond = (
-        "🟡 MODERATE — Be selective; demand tight VCP contraction and volume"
-        " dry-up."
-    )
-    pullback_cond = (
-        "🟢 YES — Optimal environment for low-risk pullback entries to 20/50"
-        " MAs."
-    )
-    consolidation_cond = (
-        "🟢 YES — Ideal time for leaders to build right sides of bases and"
-        " handles."
-    )
-    action = (
-        "1. **Selective Breakouts:** Buy only top-ranked sector leaders with"
-        " earnings catalysts.\n2. **Prune Laggards:** Trim or close positions"
-        " undercutting their 50-day SMA.\n3. **Watch Pullbacks:** Place buy"
-        " orders at 20-day EMA for established winners."
-    )
+  if v <= v_min:
+    r, g, b = c_min
+  elif v >= v_max:
+    r, g, b = c_max
+  elif v < v_mid:
+    ratio = (v - v_min) / max((v_mid - v_min), 1e-6)
+    r = int(c_min[0] + (c_mid[0] - c_min[0]) * ratio)
+    g = int(c_min[1] + (c_mid[1] - c_min[1]) * ratio)
+    b = int(c_min[2] + (c_mid[2] - c_min[2]) * ratio)
   else:
-    state = "⚠️ Choppy / Defensive / Under Pressure"
-    breakout_cond = (
-        "🔴 NO — High failure rate on breakouts. Avoid chasing new highs."
-    )
-    pullback_cond = (
-        "🟡 CAUTION — Ensure underlying support at 50/200 SMA holds firmly"
-        " before entering."
-    )
-    consolidation_cond = (
-        "🟢 YES — Market is resetting; let stocks build proper long-term"
-        " bases."
-    )
-    action = (
-        "1. **Capital Preservation:** Raise cash or tighten stop-loss levels"
-        " immediately.\n2. **No Chasing:** Do not force breakouts in a"
-        " deteriorating tape.\n3. **Watchlist Building:** Track stocks showing"
-        " Relative Strength while Nifty drops."
-    )
-
-  return {
-      "state": state,
-      "r5": r5,
-      "r10": r10,
-      "sma50": sma50,
-      "breakout_cond": breakout_cond,
-      "pullback_cond": pullback_cond,
-      "consolidation_cond": consolidation_cond,
-      "action": action,
-  }
+    ratio = (v - v_mid) / max((v_max - v_mid), 1e-6)
+    r = int(c_mid[0] + (c_max[0] - c_mid[0]) * ratio)
+    g = int(c_mid[1] + (c_max[1] - c_mid[1]) * ratio)
+    b = int(c_mid[2] + (c_max[2] - c_mid[2]) * ratio)
+  return f"background-color: #{r:02X}{g:02X}{b:02X}; color: #000000;"
 
 
-def generate_sector_awareness(df_heat):
-  if df_heat is None or df_heat.empty:
-    return {
-        "strong_sectors": ["Waiting for Sector Monitor..."],
-        "mom_sectors": ["Waiting for Sector Monitor..."],
-        "fade_sectors": ["Waiting for Sector Monitor..."],
-        "action": (
-            "Ensure NSE_Sector_Monitor.xlsx is present in your repo or Gist."
-        ),
-    }
+def color_scale_2pt(
+    val, v_min, v_max, c_min=(255, 255, 255), c_max=(99, 190, 123)
+):
+  if pd.isna(val) or val == "" or str(val).strip() == "":
+    return ""
+  try:
+    v = float(val)
+  except Exception:
+    return ""
 
-  df = df_heat.copy()
+  if v <= v_min:
+    r, g, b = c_min
+  elif v >= v_max:
+    r, g, b = c_max
+  else:
+    ratio = (v - v_min) / max((v_max - v_min), 1e-6)
+    r = int(c_min[0] + (c_max[0] - c_min[0]) * ratio)
+    g = int(c_min[1] + (c_max[1] - c_min[1]) * ratio)
+    b = int(c_min[2] + (c_max[2] - c_min[2]) * ratio)
+  return f"background-color: #{r:02X}{g:02X}{b:02X}; color: #000000;"
+
+
+def color_binary_badge(val):
+  v_str = str(val).strip().lower()
+  if v_str in ["yes", "up"]:
+    return "background-color: #63BE7B; color: #000000; font-weight: bold;"
+  elif v_str in ["no", "down"]:
+    return "background-color: #F8696B; color: #000000; font-weight: bold;"
+  return ""
+
+
+def safe_map(styler, func, subset=None):
+  if hasattr(styler, "map"):
+    return styler.map(func, subset=subset)
+  else:
+    return styler.applymap(func, subset=subset)
+
+
+def style_market_monitor(df):
+  styler = df.style
+  format_dict = {}
   for col in [
-      "65D RS Rank",
-      "5D Rank Velocity",
-      "10D Rank Velocity",
-      "5D RS %",
-      "65D RS %",
-      "% Off RS High",
+      "5 Day Ratio",
+      "10 Day Ratio",
+      "A/D Ratio",
+      "Volume Breadth",
+      "> 200 SMA (%)",
+      "> 50 SMA (%)",
+      "> 20 EMA (%)",
+      "> 10 EMA (%)",
+      "Nifty 500 Close",
+      "Nifty 500 Chg %",
   ]:
     if col in df.columns:
-      df[col] = pd.to_numeric(df[col], errors="coerce")
+      format_dict[col] = "{:.2f}"
+  styler = styler.format(format_dict, na_rep="N/A")
 
-  strong_df = df[(df["65D RS Rank"] <= 6) & (df["65D RS Rank"] >= 1)]
-  strong_sectors = [
-      f"**{r['Sector']}** (Rank #{int(r['65D RS Rank'])})"
-      for _, r in strong_df.iterrows()
-  ]
-
-  mom_df = df[
-      (df["5D Rank Velocity"] >= 1)
-      & (df["% Off RS High"] >= -6.0)
-      & (df["65D RS Rank"] <= 15)
-  ]
-  mom_sectors = [
-      (
-          f"**{r['Sector']}** (+{int(r['5D Rank Velocity'])} 5D Vel,"
-          f" {r['% Off RS High']:.1f}% off High)"
+  for c in ["Up 4% Today", "Advances", "52W Highs"]:
+    if c in df.columns:
+      max_v = 750 if c == "Advances" else 200
+      styler = safe_map(
+          styler,
+          lambda v, mv=max_v: color_scale_2pt(
+              v, 0, mv, (255, 255, 255), (99, 190, 123)
+          ),
+          subset=[c],
       )
-      for _, r in mom_df.iterrows()
-  ]
-
-  fade_df = df[
-      (df["5D Rank Velocity"] <= -3)
-      | ((df["% Off RS High"] < -7.0) & (df["65D RS Rank"] <= 12))
-  ]
-  fade_sectors = [
-      (
-          f"**{r['Sector']}** ({int(r['5D Rank Velocity']):+d} 5D Vel,"
-          f" {r['% Off RS High']:.1f}% off High)"
+  for c in ["Down 4% Today", "Declines", "52W Lows"]:
+    if c in df.columns:
+      max_v = 750 if c == "Declines" else 200
+      styler = safe_map(
+          styler,
+          lambda v, mv=max_v: color_scale_2pt(
+              v, 0, mv, (255, 255, 255), (248, 105, 107)
+          ),
+          subset=[c],
       )
-      for _, r in fade_df.iterrows()
+  for c in ["5 Day Ratio", "10 Day Ratio", "A/D Ratio", "Volume Breadth"]:
+    if c in df.columns:
+      styler = safe_map(
+          styler,
+          lambda v: color_scale_3pt(v, 0.5, 1.0, 2.0),
+          subset=[c],
+      )
+  for c in ["> 200 SMA (%)", "> 50 SMA (%)", "> 20 EMA (%)", "> 10 EMA (%)"]:
+    if c in df.columns:
+      styler = safe_map(
+          styler,
+          lambda v: color_scale_3pt(v, 0.0, 50.0, 100.0),
+          subset=[c],
+      )
+  if "Nifty 500 Chg %" in df.columns:
+    styler = safe_map(
+        styler,
+        lambda v: color_scale_3pt(v, -2.0, 0.0, 2.0),
+        subset=["Nifty 500 Chg %"],
+    )
+  try:
+    styler = styler.hide(axis="index")
+  except Exception:
+    pass
+  return styler
+
+
+def style_sector_heatmap(df):
+  styler = df.style
+  format_dict = {}
+  for col in ["Close", "% Chg", "5D RS %", "21D RS %", "65D RS %", "% Off RS High"]:
+    if col in df.columns:
+      format_dict[col] = "{:.2f}"
+  styler = styler.format(format_dict, na_rep="N/A")
+
+  vel_cols = [
+      "5D Rank Velocity",
+      "10D Rank Velocity",
+      "21D Rank Velocity",
+      "65D Rank Velocity",
   ]
-
-  top_names = [r["Sector"] for _, r in strong_df.head(3).iterrows()]
-  mom_names = [
-      r["Sector"]
-      for _, r in mom_df.head(3).iterrows()
-      if r["Sector"] not in top_names
+  for c in vel_cols:
+    if c in df.columns:
+      styler = safe_map(
+          styler,
+          lambda v: color_scale_3pt(v, -10, 0, 10),
+          subset=[c],
+      )
+  rs_cols = ["5D RS %", "21D RS %", "65D RS %"]
+  for c in rs_cols:
+    if c in df.columns:
+      styler = safe_map(
+          styler,
+          lambda v: color_scale_3pt(v, -10, 0, 10),
+          subset=[c],
+      )
+  if "% Off RS High" in df.columns:
+    styler = safe_map(
+        styler,
+        lambda v: color_scale_3pt(v, -15.0, -5.0, 0.0),
+        subset=["% Off RS High"],
+    )
+  bin_cols = [
+      "RS Trend (>50 SMA)",
+      "> 10 EMA",
+      "> 20 EMA",
+      "> 50 SMA",
+      "> 200 SMA",
   ]
-  fade_names = [r["Sector"] for _, r in fade_df.head(3).iterrows()]
+  for c in bin_cols:
+    if c in df.columns:
+      styler = safe_map(styler, color_binary_badge, subset=[c])
+  try:
+    styler = styler.hide(axis="index")
+  except Exception:
+    pass
+  return styler
 
-  action = (
-      f"1. **Primary Breakout Focus:** Scan **{', '.join(top_names[:3]) if top_names else 'Top Rank Sectors'}**"
-      " for CAN SLIM / VCP base breakouts and pocket pivots.\n"
-      f"2. **Emerging Leadership:** Watch **{', '.join(mom_names[:3]) if mom_names else 'Top Rank Sectors'}**"
-      " for positive rank acceleration and volume surges.\n"
-      f"3. **Caution / Take Profits:** Tighten trailing stops or avoid new"
-      f" long breakouts in fading sectors (**{', '.join(fade_names[:3]) if fade_names else 'None currently'}**)."
-  )
 
-  return {
-      "strong_sectors": strong_sectors,
-      "mom_sectors": mom_sectors,
-      "fade_sectors": fade_sectors,
-      "action": action,
-  }
+def style_rotation_tracker(df):
+  styler = df.style
+  sec_cols = [c for c in df.columns if c != "Date"]
+  num_sec = max(len(sec_cols), 1)
+  mid_rank = max((num_sec // 2) + 1, 1)
+  for c in sec_cols:
+    styler = safe_map(
+        styler,
+        lambda v, ms=num_sec, mr=mid_rank: color_scale_3pt(
+            v,
+            1,
+            mr,
+            ms,
+            c_min=(99, 190, 123),
+            c_mid=(255, 255, 255),
+            c_max=(248, 105, 107),
+        ),
+        subset=[c],
+    )
+  try:
+    styler = styler.hide(axis="index")
+  except Exception:
+    pass
+  return styler
 
 
 # ==========================================
@@ -3078,80 +3125,22 @@ with tab_watchlists:
 with tab_market_health:
   st.subheader("🏥 Market Health & Sector Rotation Studio")
   st.markdown(
-      "Automated **Nifty 500 Breadth Monitor**, **27-Sector CAN SLIM"
-      " Rotation Engine**, and **Next-Day Situational Action Plan**."
+      "Automated **Nifty 500 Breadth Monitor** and **27-Sector CAN SLIM"
+      " Rotation Engine**. Automatically synchronized with your daily"
+      " scheduled cronjob."
   )
 
-  df_mm = load_market_monitor_data()
-  df_heat, df_rot = load_sector_monitor_data()
-
-  # --------------------------------------------------------
-  # 🧠 SITUATIONAL AWARENESS & NEXT-DAY ACTION PLAN CARD (ALWAYS VISIBLE)
-  # --------------------------------------------------------
-  market_insight = generate_market_awareness(df_mm)
-  sector_insight = generate_sector_awareness(df_heat)
-
-  with st.expander(
-      "🧠 Daily Automated Situational Awareness & Next-Day Game Plan",
-      expanded=True,
-  ):
-    st.markdown(
-        f"### Current Market Regime: **{market_insight.get('state')}**"
-    )
-
-    col_sa_left, col_sa_right = st.columns([1.1, 1.2])
-
-    with col_sa_left:
-      st.markdown("#### 📈 Setup Conduciveness Analysis")
-      st.markdown(
-          "**• Momentum Breakout Setups:**"
-          f" {market_insight.get('breakout_cond')}\n"
-          "**• Pullback Setups:**"
-          f" {market_insight.get('pullback_cond')}\n"
-          "**• Consolidation Setups:**"
-          f" {market_insight.get('consolidation_cond')}"
-      )
-
-      st.markdown("#### 🎯 Market Game Plan for Tomorrow")
-      st.info(market_insight.get("action"))
-
-    with col_sa_right:
-      st.markdown("#### 🔥 Sector Leadership & Momentum Tracking")
-      strong_str = (
-          ", ".join(sector_insight.get("strong_sectors", [])[:4])
-          if sector_insight.get("strong_sectors")
-          else "None"
-      )
-      mom_str = (
-          ", ".join(sector_insight.get("mom_sectors", [])[:4])
-          if sector_insight.get("mom_sectors")
-          else "None"
-      )
-      fade_str = (
-          ", ".join(sector_insight.get("fade_sectors", [])[:4])
-          if sector_insight.get("fade_sectors")
-          else "None"
-      )
-
-      st.markdown(
-          f"**• Strong Performing Sectors:** {strong_str}\n"
-          f"**• Sectors in Momentum (Focus Here):** {mom_str}\n"
-          f"**• Fading / Cooling Sectors (Avoid/Trim):** {fade_str}"
-      )
-
-      st.markdown("#### 🚀 Sector Action Plan for Tomorrow")
-      st.success(sector_insight.get("action"))
-
-  # --------------------------------------------------------
-  # SUB-TABS: MARKET MONITOR | SECTOR HEATMAP | ROTATION
-  # --------------------------------------------------------
-  tab_mm_view, tab_sector_heat_view, tab_sector_rot_view = st.tabs([
+  tab_mm, tab_sector_heat, tab_sector_rot = st.tabs([
       "📈 NSE Market Breadth Monitor",
       "🔥 Sector RS Heatmap",
       "📊 Historical Rotation Tracker",
   ])
 
-  with tab_mm_view:
+  # ------------------------------------------
+  # TAB 3A: NSE MARKET MONITOR
+  # ------------------------------------------
+  with tab_mm:
+    df_mm = load_market_monitor_data()
     if not df_mm.empty:
       st.markdown(
           f"#### 📊 Nifty Total Market Breadth & VCP Indicators ({len(df_mm)} Days)"
@@ -3176,17 +3165,20 @@ with tab_market_health:
       with c4:
         st.metric("A/D Ratio", f"{latest.get('A/D Ratio', 'N/A')}")
 
-      st.dataframe(
-          df_mm,
-          use_container_width=True,
-          hide_index=True,
-          height=520,
-          column_config=get_left_aligned_column_config(df_mm.columns),
-      )
+      styled_mm = style_market_monitor(df_mm)
+      st.table(styled_mm)
     else:
-      st.info("Market Monitor data not available yet.")
+      st.info(
+          "Market Monitor data not available yet. If your repo is Private,"
+          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
+          " App Settings -> Secrets."
+      )
 
-  with tab_sector_heat_view:
+  # ------------------------------------------
+  # TAB 3B: SECTOR RS HEATMAP
+  # ------------------------------------------
+  with tab_sector_heat:
+    df_heat, _ = load_sector_monitor_data()
     if not df_heat.empty:
       st.markdown(
           "#### 🔥 27-Sector CAN SLIM Relative Strength Heatmap (Ranked by 65D RS)"
@@ -3196,17 +3188,20 @@ with tab_market_health:
           " acceleration; Negative (-) indicate loss of relative momentum."
       )
 
-      st.dataframe(
-          df_heat,
-          use_container_width=True,
-          hide_index=True,
-          height=580,
-          column_config=get_left_aligned_column_config(df_heat.columns),
-      )
+      styled_heat = style_sector_heatmap(df_heat)
+      st.table(styled_heat)
     else:
-      st.info("Sector Heatmap data not available yet.")
+      st.info(
+          "Sector Heatmap data not available yet. If your repo is Private,"
+          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
+          " App Settings -> Secrets."
+      )
 
-  with tab_sector_rot_view:
+  # ------------------------------------------
+  # TAB 3C: HISTORICAL ROTATION TRACKER
+  # ------------------------------------------
+  with tab_sector_rot:
+    _, df_rot = load_sector_monitor_data()
     if not df_rot.empty:
       st.markdown(
           "#### 📊 65-Day Historical Relative Strength Ranks (All Sectors)"
@@ -3216,20 +3211,24 @@ with tab_market_health:
           " (`^CRSLDX`)."
       )
 
-      st.dataframe(
-          df_rot,
-          use_container_width=True,
-          hide_index=True,
-          height=580,
-          column_config=get_left_aligned_column_config(df_rot.columns),
-      )
+      styled_rot = style_rotation_tracker(df_rot)
+      st.table(styled_rot)
     else:
-      st.info("Rotation Tracker data not available yet.")
+      st.info(
+          "Rotation Tracker data not available yet. If your repo is Private,"
+          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
+          " App Settings -> Secrets."
+      )
 
   st.markdown("---")
   with st.expander(
       "⚡ Optional: Force Real-Time Scan Now (Bypass Daily Schedule)"
   ):
+    st.caption(
+        "Your scheduled cronjob automatically pushes updated Excel files to"
+        " GitHub every weekday. Click below only if you want to force an"
+        " immediate intraday refresh of Streamlit's data cache."
+    )
     if st.button(
         "🔄 Clear Streamlit Data Cache & Reload", type="secondary"
     ):
