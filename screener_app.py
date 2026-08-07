@@ -412,7 +412,7 @@ if "wl_sel_counter" not in st.session_state:
 
 
 # ==========================================
-# GEMINI FUNDAMENTAL AI ANALYST & SCRAPER
+# GEMINI FUNDAMENTAL AI ANALYST ENGINE
 # ==========================================
 def run_gemini_fundamental_analysis(ticker_input):
   gemini_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -694,19 +694,10 @@ def show_fundamental_modal(ticker_symbol):
   rep = st.session_state.fundamental_reports.get(clean_sym)
 
   if not rep:
-    st.info(f"No stored report for **{clean_sym}**. Click below to run AI.")
-    if st.button(
-        "⚡ Run Gemini 2.5 Flash Analysis Now",
-        type="primary",
-        use_container_width=True,
-    ):
-      with st.spinner(
-          f"📡 Downloading Screener.in PDFs & analyzing {clean_sym}..."
-      ):
-        new_rep = run_gemini_fundamental_analysis(clean_sym)
-        if new_rep:
-          st.success("✅ Report generated and saved to Gist!")
-          st.rerun()
+    st.info(
+        f"No stored report for **{clean_sym}**. Select its row in the table"
+        " below and click 'Run AI Analysis'!"
+    )
   else:
     st.subheader(f"📊 {clean_sym} — {rep.get('verdict', 'N/A')}")
     st.caption(
@@ -715,20 +706,6 @@ def show_fundamental_modal(ticker_symbol):
     )
     st.markdown("---")
     st.markdown(rep.get("report_md", ""))
-    st.markdown("---")
-    if st.button(
-        "🔄 Re-Analyze & Overwrite (Quarterly Refresh)",
-        type="secondary",
-        use_container_width=True,
-    ):
-      with st.spinner(
-          f"📡 Fetching latest Screener.in PDFs & replacing {clean_sym}"
-          " report..."
-      ):
-        updated_rep = run_gemini_fundamental_analysis(clean_sym)
-        if updated_rep:
-          st.success("✅ Old report replaced with latest quarterly data!")
-          st.rerun()
 
 
 def get_fundamental_badge(sym_name):
@@ -3065,31 +3042,77 @@ with tab_screener:
       )
 
       # ----------------------------------------------------
-      # 🧠 FUNDAMENTAL AI ANALYST STUDIO BAR (SCAN TAB)
+      # 🧠 POPUP-FREE BATCH FUNDAMENTAL RUNNER (SCAN TAB)
       # ----------------------------------------------------
       st.markdown("---")
       st.markdown("#### 🧠 Minervini Fundamental AI Analyst Studio")
-      f_col1, f_col2, f_col3 = st.columns([1.8, 1.8, 1.4])
+      f_col1, f_col2, f_col3, f_col4 = st.columns([1.6, 1.6, 1.2, 1.2])
+
       with f_col1:
         selected_fund_ticker_scan = st.selectbox(
-            "Select Ticker to View or Generate AI Report:",
+            "View Stored Report for Stock:",
             options=df_display["TV_Symbol"].tolist(),
             key=f"fund_scan_select_{rc}_{sc}",
         )
       with f_col2:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button(
-            "📖 Open Saved Report / Run AI Analyst",
-            type="primary",
+            "📖 Open Saved Report Modal",
+            type="secondary",
             use_container_width=True,
-            key=f"fund_btn_scan_{rc}_{sc}",
+            key=f"fund_btn_view_scan_{rc}_{sc}",
         ):
           show_fundamental_modal(selected_fund_ticker_scan)
+
       with f_col3:
         st.markdown("<br>", unsafe_allow_html=True)
-        st.caption(
-            "💡 Zero tokens used on saved reports. Overwrite option available inside dialog."
+        force_reanalyze_scan = st.checkbox(
+            "Force Re-Analyze Existing",
+            value=False,
+            key=f"force_scan_{rc}_{sc}",
+            help="If checked, AI will re-fetch Screener PDFs even if a report already exists.",
         )
+
+      with f_col4:
+        st.markdown("<br>", unsafe_allow_html=True)
+        run_batch_scan = st.button(
+            f"⚡ Analyze Selected ({len(selected_rows)})",
+            type="primary",
+            use_container_width=True,
+            disabled=len(selected_rows) == 0,
+            key=f"fund_btn_run_scan_{rc}_{sc}",
+        )
+
+      if run_batch_scan and len(selected_rows) > 0:
+        st.markdown("##### ⏳ Batch Queue Running...")
+        p_bar = st.progress(0.0)
+        status_msg = st.empty()
+
+        for idx, sym in enumerate(selected_rows):
+          clean_sym = sym.split(":")[-1].strip().upper()
+          if (
+              clean_sym in st.session_state.fundamental_reports
+              and not force_reanalyze_scan
+          ):
+            status_msg.info(
+                f"⏩ Skipping {clean_sym} (Report already exists). Check 'Force"
+                " Re-Analyze' to overwrite."
+            )
+          else:
+            status_msg.warning(
+                f"📡 Processing ({idx + 1}/{len(selected_rows)}): **{clean_sym}**"
+                " — Downloading Screener.in PDFs & Analyzing with Gemini..."
+            )
+            run_gemini_fundamental_analysis(clean_sym)
+
+          p_bar.progress((idx + 1) / len(selected_rows))
+
+        status_msg.success(
+            f"✅ Finished fundamental processing for {len(selected_rows)}"
+            " selected stocks!"
+        )
+        time.sleep(1)
+        st.rerun()
 
       st.markdown("---")
       cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
@@ -3553,31 +3576,77 @@ with tab_watchlists:
     )
 
     # ----------------------------------------------------
-    # 🧠 FUNDAMENTAL AI ANALYST STUDIO BAR (WATCHLIST TAB)
+    # 🧠 POPUP-FREE BATCH FUNDAMENTAL RUNNER (WATCHLIST TAB)
     # ----------------------------------------------------
     st.markdown("---")
     st.markdown("#### 🧠 Minervini Fundamental AI Analyst Studio")
-    wf_col1, wf_col2, wf_col3 = st.columns([1.8, 1.8, 1.4])
+    wf_col1, wf_col2, wf_col3, wf_col4 = st.columns([1.6, 1.6, 1.2, 1.2])
+
     with wf_col1:
       selected_fund_ticker_wl = st.selectbox(
-          "Select Ticker to View or Generate AI Report:",
+          "View Stored Report for Stock:",
           options=merged_df["TV_Symbol"].tolist(),
           key=f"fund_wl_select_{wsc}",
       )
     with wf_col2:
       st.markdown("<br>", unsafe_allow_html=True)
       if st.button(
-          "📖 Open Saved Report / Run AI Analyst",
-          type="primary",
+          "📖 Open Saved Report Modal",
+          type="secondary",
           use_container_width=True,
-          key=f"fund_btn_wl_{wsc}",
+          key=f"fund_btn_view_wl_{wsc}",
       ):
         show_fundamental_modal(selected_fund_ticker_wl)
+
     with wf_col3:
       st.markdown("<br>", unsafe_allow_html=True)
-      st.caption(
-          "💡 Zero tokens used on saved reports. Overwrite option available inside dialog."
+      force_reanalyze_wl = st.checkbox(
+          "Force Re-Analyze Existing",
+          value=False,
+          key=f"force_wl_{wsc}",
+          help="If checked, AI will re-fetch Screener PDFs even if a report already exists.",
       )
+
+    with wf_col4:
+      st.markdown("<br>", unsafe_allow_html=True)
+      run_batch_wl = st.button(
+          f"⚡ Analyze Selected ({len(sel_symbols)})",
+          type="primary",
+          use_container_width=True,
+          disabled=len(sel_symbols) == 0,
+          key=f"fund_btn_run_wl_{wsc}",
+      )
+
+    if run_batch_wl and len(sel_symbols) > 0:
+      st.markdown("##### ⏳ Batch Queue Running...")
+      p_bar = st.progress(0.0)
+      status_msg = st.empty()
+
+      for idx, sym in enumerate(sel_symbols):
+        clean_sym = sym.split(":")[-1].strip().upper()
+        if (
+            clean_sym in st.session_state.fundamental_reports
+            and not force_reanalyze_wl
+        ):
+          status_msg.info(
+              f"⏩ Skipping {clean_sym} (Report already exists). Check 'Force"
+              " Re-Analyze' to overwrite."
+          )
+        else:
+          status_msg.warning(
+              f"📡 Processing ({idx + 1}/{len(sel_symbols)}): **{clean_sym}** —"
+              " Downloading Screener.in PDFs & Analyzing with Gemini..."
+          )
+          run_gemini_fundamental_analysis(clean_sym)
+
+        p_bar.progress((idx + 1) / len(sel_symbols))
+
+      status_msg.success(
+          f"✅ Finished fundamental processing for {len(sel_symbols)} selected"
+          " stocks!"
+      )
+      time.sleep(1)
+      st.rerun()
 
     c_rem, c_clr, c_promo_sel, c_promo_btn = st.columns([1.5, 1.2, 2.0, 1.5])
     with c_rem:
