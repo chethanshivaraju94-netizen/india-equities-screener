@@ -4,6 +4,7 @@ import json
 import os
 import re
 import smtplib
+import threading
 import time
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
@@ -367,24 +368,35 @@ def load_fundamental_reports():
   return {}
 
 
-def save_fundamental_reports(reports_dict):
+def save_fundamental_reports(reports_dict, auth_config=None):
   try:
     with open(REPORTS_FILE, "w") as f:
       json.dump(reports_dict, f, indent=2)
   except Exception:
     pass
 
-  if GITHUB_TOKEN and GIST_ID:
+  token = (
+      auth_config.get("github_token")
+      if auth_config
+      else st.secrets.get("GITHUB_TOKEN", None)
+  )
+  gist_id = (
+      auth_config.get("gist_id")
+      if auth_config
+      else st.secrets.get("GIST_ID", None)
+  )
+
+  if token and gist_id:
     try:
       headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
+          "Authorization": f"token {token}",
           "Accept": "application/vnd.github.v3+json",
       }
       payload = {
           "files": {REPORTS_FILE: {"content": json.dumps(reports_dict, indent=2)}}
       }
       requests.patch(
-          f"https://api.github.com/gists/{GIST_ID}",
+          f"https://api.github.com/gists/{gist_id}",
           headers=headers,
           json=payload,
           timeout=5,
@@ -410,21 +422,66 @@ if "scan_sel_counter" not in st.session_state:
 if "wl_sel_counter" not in st.session_state:
   st.session_state.wl_sel_counter = 0
 
+# ==========================================
+# UNSTOPPABLE BACKGROUND AI WORKER TRACKER
+# ==========================================
+GLOBAL_AI_WORKER_STATE = {
+    "is_running": False,
+    "total": 0,
+    "completed": 0,
+    "current_ticker": "",
+    "message": "",
+    "last_updated": 0,
+}
+
+
+def background_ai_worker(
+    symbols_list, force_reanalyze, auth_config, reports_dict
+):
+  GLOBAL_AI_WORKER_STATE["is_running"] = True
+  GLOBAL_AI_WORKER_STATE["total"] = len(symbols_list)
+  GLOBAL_AI_WORKER_STATE["completed"] = 0
+
+  for idx, sym in enumerate(symbols_list):
+    clean_sym = sym.split(":")[-1].strip().upper()
+    GLOBAL_AI_WORKER_STATE["current_ticker"] = clean_sym
+    GLOBAL_AI_WORKER_STATE["message"] = (
+        f"Analyzing ({idx + 1}/{len(symbols_list)}): {clean_sym} — Downloading"
+        " PDFs & Running Gemini..."
+    )
+
+    if clean_sym in reports_dict and not force_reanalyze:
+      GLOBAL_AI_WORKER_STATE["completed"] += 1
+      continue
+
+    try:
+      new_rep = run_gemini_fundamental_analysis(clean_sym, auth_config)
+      if new_rep:
+        reports_dict[clean_sym] = new_rep
+        save_fundamental_reports(reports_dict, auth_config)
+    except Exception as e:
+      print(f"Background AI Worker Error ({clean_sym}): {e}")
+
+    GLOBAL_AI_WORKER_STATE["completed"] += 1
+    GLOBAL_AI_WORKER_STATE["last_updated"] = time.time()
+
+  GLOBAL_AI_WORKER_STATE["is_running"] = False
+  GLOBAL_AI_WORKER_STATE["message"] = (
+      f"✅ Completed AI Fundamental Analysis for {len(symbols_list)} stocks!"
+  )
+  GLOBAL_AI_WORKER_STATE["last_updated"] = time.time()
+
 
 # ==========================================
 # GEMINI FUNDAMENTAL AI ANALYST ENGINE
 # ==========================================
-def run_gemini_fundamental_analysis(
-    ticker_input, reports_store=None, status_log=None
-):
-  gemini_key = st.secrets.get("GEMINI_API_KEY", "")
-  screener_sid = st.secrets.get("SCREENER_SESSION_ID", "")
-  email_addr = st.secrets.get("EMAIL_ADDRESS", "")
-  email_pass = st.secrets.get("EMAIL_APP_PASSWORD", "")
+def run_gemini_fundamental_analysis(ticker_input, auth_config):
+  gemini_key = auth_config.get("gemini_key", "")
+  screener_sid = auth_config.get("screener_sid", "")
+  email_addr = auth_config.get("email_addr", "")
+  email_pass = auth_config.get("email_pass", "")
 
   if not gemini_key:
-    if status_log:
-      status_log.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets!")
     return None
 
   client = genai.Client(api_key=gemini_key)
@@ -453,24 +510,13 @@ def run_gemini_fundamental_analysis(
   url = f"https://www.screener.in/company/{clean_ticker}/consolidated/"
 
   try:
-    if status_log:
-      status_log.write(f"📡 **{clean_ticker}:** Accessing Screener.in page...")
     res = requests.get(url, headers=headers, cookies=cookies, timeout=20)
     if res.status_code != 200:
-      if status_log:
-        status_log.error(
-            f"❌ **{clean_ticker}:** Could not access Screener.in page (HTTP"
-            f" {res.status_code})."
-        )
       return None
 
     soup = BeautifulSoup(res.content, "html.parser")
     documents_section = soup.find(id="documents")
     if not documents_section:
-      if status_log:
-        status_log.warning(
-            f"⚠️ **{clean_ticker}:** No documents section found on Screener.in."
-        )
       return None
 
     ars, transcripts, ppts = [], [], []
@@ -511,11 +557,6 @@ def run_gemini_fundamental_analysis(
         pass
       return False
 
-    if status_log:
-      status_log.write(
-          f"📥 **{clean_ticker}:** Downloading latest Annual Report,"
-          " Transcripts & PPTs..."
-      )
     for t, h in ars[:1]:
       try_download("Annual Report", h)
     for t, h in transcripts[:4]:
@@ -525,17 +566,8 @@ def run_gemini_fundamental_analysis(
 
     pdf_files = glob.glob(f"{download_dir}/*.pdf")
     if not pdf_files:
-      if status_log:
-        status_log.error(
-            f"❌ **{clean_ticker}:** Could not download any valid PDF reports."
-        )
       return None
 
-    if status_log:
-      status_log.write(
-          f"🤖 **{clean_ticker}:** Uploading {len(pdf_files)} PDFs to Gemini"
-          " 2.5 Flash..."
-      )
     uploaded_files = [client.files.upload(file=fp) for fp in pdf_files]
     for f in uploaded_files:
       while True:
@@ -640,19 +672,6 @@ Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail
         "report_md": analysis_text,
     }
 
-    if reports_store is not None:
-      reports_store[clean_ticker] = report_entry
-      save_fundamental_reports(reports_store)
-    else:
-      st.session_state.fundamental_reports[clean_ticker] = report_entry
-      save_fundamental_reports(st.session_state.fundamental_reports)
-
-    if status_log:
-      status_log.write(
-          f"✅ **{clean_ticker}:** Analysis complete! Verdict ->"
-          f" **{verdict}** (Saved to Gist)"
-      )
-
     # Optional Email Sender
     if email_addr and email_pass:
       try:
@@ -676,9 +695,7 @@ Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail
 
     return report_entry
 
-  except Exception as e:
-    if status_log:
-      status_log.error(f"❌ **{clean_ticker}:** Analysis failed -> {e}")
+  except Exception:
     return None
 
 
@@ -710,14 +727,24 @@ def show_fundamental_modal(ticker_symbol):
         type="secondary",
         use_container_width=True,
     ):
+      auth_config = {
+          "gemini_key": st.secrets.get("GEMINI_API_KEY", ""),
+          "screener_sid": st.secrets.get("SCREENER_SESSION_ID", ""),
+          "email_addr": st.secrets.get("EMAIL_ADDRESS", ""),
+          "email_pass": st.secrets.get("EMAIL_APP_PASSWORD", ""),
+          "github_token": st.secrets.get("GITHUB_TOKEN", None),
+          "gist_id": st.secrets.get("GIST_ID", None),
+      }
       with st.spinner(
           f"📡 Fetching latest Screener.in PDFs & replacing {clean_sym}"
           " report..."
       ):
-        updated_rep = run_gemini_fundamental_analysis(
-            clean_sym, st.session_state.fundamental_reports
-        )
+        updated_rep = run_gemini_fundamental_analysis(clean_sym, auth_config)
         if updated_rep:
+          st.session_state.fundamental_reports[clean_sym] = updated_rep
+          save_fundamental_reports(
+              st.session_state.fundamental_reports, auth_config
+          )
           st.success("✅ Old report replaced with latest quarterly data!")
           st.rerun()
 
@@ -1117,79 +1144,6 @@ def style_rotation_tracker(df):
   except Exception:
     pass
   return styler
-
-
-# ==========================================
-# VISUAL WATCHLIST COLOR DOT HELPER
-# ==========================================
-def get_wl_dots(symbol, watchlists_dict):
-  bare_sym = (
-      symbol.split(":")[-1].strip().upper()
-      if ":" in str(symbol)
-      else str(symbol).strip().upper()
-  )
-  dots = []
-  for wl_name, sym_list in watchlists_dict.items():
-    wl_bare_symbols = [s.split(":")[-1].strip().upper() for s in sym_list]
-    if bare_sym in wl_bare_symbols:
-      name_lower = wl_name.lower()
-      if "post breakout" in name_lower or "breakout" in name_lower:
-        dot = "🔵"
-      elif "weekly" in name_lower:
-        dot = "🟡"
-      elif "focus" in name_lower:
-        dot = "🟢"
-      elif "scan bulk" in name_lower or "bulk" in name_lower:
-        dot = "🟠"
-      elif "sold" in name_lower:
-        dot = "🔴"
-      else:
-        dot = "🟣"
-      if dot not in dots:
-        dots.append(dot)
-  return "".join(dots)
-
-
-# ==========================================
-# VISUAL CIRCUIT STOCK BADGE HELPER
-# ==========================================
-def is_circuit_stock_badge(row, bands_map):
-  sym = str(row.get("name", "")).replace("🚨", "").strip().upper()
-  band_val = bands_map.get(sym, "")
-  if band_val in ["2", "5", "10"]:
-    return True
-
-  high = pd.to_numeric(row.get("high"), errors="coerce")
-  low = pd.to_numeric(row.get("low"), errors="coerce")
-  open_p = pd.to_numeric(row.get("open"), errors="coerce")
-  close_p = pd.to_numeric(row.get("close"), errors="coerce")
-  change_p = abs(pd.to_numeric(row.get("change"), errors="coerce"))
-
-  if (
-      pd.notna(high)
-      and pd.notna(low)
-      and high == low
-      and high > 0
-      and pd.notna(change_p)
-      and change_p > 1.5
-  ):
-    return True
-
-  is_locked = (
-      pd.notna(close_p)
-      and pd.notna(high)
-      and pd.notna(low)
-      and (close_p == high or close_p == low)
-      and (high != open_p)
-  )
-  if is_locked and (
-      (1.97 <= change_p <= 2.00)
-      or (4.97 <= change_p <= 5.00)
-      or (9.97 <= change_p <= 10.00)
-  ):
-    return True
-
-  return False
 
 
 # ==========================================
@@ -2555,7 +2509,7 @@ with tab_screener:
         ma_cols_to_fetch,
         max_results,
     )
-    nse_bands_map = get_nse_circuit_bands()
+    nse_bands_map = get_nse_circuit_bands() or {}
 
   if results_df.empty:
     st.warning(
@@ -3127,43 +3081,47 @@ with tab_screener:
         )
 
       if run_batch_scan and len(selected_rows) > 0:
-        with st.status(
-            "🧠 Minervini Fundamental AI Analyst — Active Queue",
-            expanded=True,
-        ) as status_box:
-          p_bar = st.progress(0.0)
-          for idx, sym in enumerate(selected_rows):
-            clean_sym = sym.split(":")[-1].strip().upper()
-            if (
-                clean_sym in st.session_state.fundamental_reports
-                and not force_reanalyze_scan
-            ):
-              status_box.write(
-                  f"⏩ **[{idx + 1}/{len(selected_rows)}] {clean_sym}:** Report"
-                  " already exists in Gist. (Check 'Force Re-Analyze' to"
-                  " overwrite)"
-              )
-            else:
-              status_box.write(
-                  f"⚙️ **[{idx + 1}/{len(selected_rows)}] {clean_sym}:**"
-                  " Downloading Screener.in PDFs & Running Gemini 2.5"
-                  " Flash..."
-              )
-              run_gemini_fundamental_analysis(
-                  clean_sym,
+        if not GLOBAL_AI_WORKER_STATE["is_running"]:
+          auth_cfg = {
+              "gemini_key": st.secrets.get("GEMINI_API_KEY", ""),
+              "screener_sid": st.secrets.get("SCREENER_SESSION_ID", ""),
+              "email_addr": st.secrets.get("EMAIL_ADDRESS", ""),
+              "email_pass": st.secrets.get("EMAIL_APP_PASSWORD", ""),
+              "github_token": st.secrets.get("GITHUB_TOKEN", None),
+              "gist_id": st.secrets.get("GIST_ID", None),
+          }
+          t = threading.Thread(
+              target=background_ai_worker,
+              args=(
+                  selected_rows,
+                  force_reanalyze_scan,
+                  auth_cfg,
                   st.session_state.fundamental_reports,
-                  status_log=status_box,
-              )
-
-            p_bar.progress((idx + 1) / len(selected_rows))
-
-          status_box.update(
-              label="✅ Batch AI Analysis Complete! Updating Table...",
-              state="complete",
-              expanded=True,
+              ),
+              daemon=True,
           )
-          time.sleep(1.5)
+          t.start()
+          time.sleep(0.4)
           st.rerun()
+
+      if GLOBAL_AI_WORKER_STATE["is_running"]:
+        st.info(
+            "⚙️ **Background AI Worker Active:**"
+            f" {GLOBAL_AI_WORKER_STATE['message']} *(You can freely"
+            " check/uncheck boxes or switch watchlists — analysis will not"
+            " abort!)*"
+        )
+        st.progress(
+            GLOBAL_AI_WORKER_STATE["completed"]
+            / max(1, GLOBAL_AI_WORKER_STATE["total"])
+        )
+        if st.button("🔄 Refresh Progress & Table", key=f"ref_worker_{rc}_{sc}"):
+          st.rerun()
+      elif (
+          GLOBAL_AI_WORKER_STATE["message"]
+          and time.time() - GLOBAL_AI_WORKER_STATE["last_updated"] < 60
+      ):
+        st.success(GLOBAL_AI_WORKER_STATE["message"])
 
       st.markdown("---")
       cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
@@ -3700,42 +3658,46 @@ with tab_watchlists:
       )
 
     if run_batch_wl and len(sel_symbols) > 0:
-      with st.status(
-          "🧠 Minervini Fundamental AI Analyst — Active Queue",
-          expanded=True,
-      ) as status_box_wl:
-        p_bar = st.progress(0.0)
-        for idx, sym in enumerate(sel_symbols):
-          clean_sym = sym.split(":")[-1].strip().upper()
-          if (
-              clean_sym in st.session_state.fundamental_reports
-              and not force_reanalyze_wl
-          ):
-            status_box_wl.write(
-                f"⏩ **[{idx + 1}/{len(sel_symbols)}] {clean_sym}:** Report"
-                " already exists in Gist. (Check 'Force Re-Analyze' to"
-                " overwrite)"
-            )
-          else:
-            status_box_wl.write(
-                f"⚙️ **[{idx + 1}/{len(sel_symbols)}] {clean_sym}:**"
-                " Downloading Screener.in PDFs & Running Gemini 2.5 Flash..."
-            )
-            run_gemini_fundamental_analysis(
-                clean_sym,
+      if not GLOBAL_AI_WORKER_STATE["is_running"]:
+        auth_cfg_wl = {
+            "gemini_key": st.secrets.get("GEMINI_API_KEY", ""),
+            "screener_sid": st.secrets.get("SCREENER_SESSION_ID", ""),
+            "email_addr": st.secrets.get("EMAIL_ADDRESS", ""),
+            "email_pass": st.secrets.get("EMAIL_APP_PASSWORD", ""),
+            "github_token": st.secrets.get("GITHUB_TOKEN", None),
+            "gist_id": st.secrets.get("GIST_ID", None),
+        }
+        t = threading.Thread(
+            target=background_ai_worker,
+            args=(
+                sel_symbols,
+                force_reanalyze_wl,
+                auth_cfg_wl,
                 st.session_state.fundamental_reports,
-                status_log=status_box_wl,
-            )
-
-          p_bar.progress((idx + 1) / len(sel_symbols))
-
-        status_box_wl.update(
-            label="✅ Batch AI Analysis Complete! Updating Table...",
-            state="complete",
-            expanded=True,
+            ),
+            daemon=True,
         )
-        time.sleep(1.5)
+        t.start()
+        time.sleep(0.4)
         st.rerun()
+
+    if GLOBAL_AI_WORKER_STATE["is_running"]:
+      st.info(
+          "⚙️ **Background AI Worker Active:**"
+          f" {GLOBAL_AI_WORKER_STATE['message']} *(You can freely check/uncheck"
+          " boxes or switch watchlists — analysis will not abort!)*"
+      )
+      st.progress(
+          GLOBAL_AI_WORKER_STATE["completed"]
+          / max(1, GLOBAL_AI_WORKER_STATE["total"])
+      )
+      if st.button("🔄 Refresh Progress & Table", key=f"ref_worker_wl_{wsc}"):
+        st.rerun()
+    elif (
+        GLOBAL_AI_WORKER_STATE["message"]
+        and time.time() - GLOBAL_AI_WORKER_STATE["last_updated"] < 60
+    ):
+      st.success(GLOBAL_AI_WORKER_STATE["message"])
 
     c_rem, c_clr, c_promo_sel, c_promo_btn = st.columns([1.5, 1.2, 2.0, 1.5])
     with c_rem:
