@@ -541,7 +541,7 @@ You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your
   - *Consumer / FMCG / Retail:* Volume growth acceleration (not just price-led), Same-Store Sales Growth (SSSG), store count expansion.
   - *Pharma / Healthcare:* US FDA approvals, new launches, hospital bed capacity additions, ARPOB growth.
   - *Platforms / Exchanges:* Market share expansion, active user growth, transaction volume surges.
-- **FORWARD-LOOKING vs. BACKWARD-LOOKING:** Prioritize forward-looking triggers (management guidance, upcoming launches, margin expansions, pipeline) found in recent Earnings Calls over historical reasons in old reports.
+- **FORWARD-LOOKING vs. BACKWARD-LOOKING:** Prioritize forward-looking triggers (management guidance, upcoming launches, margin expansions, pipeline) found in recent Earnings Calls over historical reports.
 - **Base Verdict ONLY on Available Data:** Do not penalize missing data points, but strictly enforce the presence of a tangible growth catalyst.
 
 ---
@@ -551,11 +551,8 @@ You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your
 #### 1. HEADER & INSTANT VERDICT
 Provide the company name and an instant decision verdict:
 - **MINERVINI FUNDAMENTAL VERDICT:** [Insert 🟢 PASS / 🟡 WATCHLIST / 🔴 FAIL]
-- **🚀 PRIMARY CATALYST / BREAKOUT TRIGGER:** [State in 1-2 BOLD sentences the exact forward-looking trigger driving this stock (e.g., "New plant going live in Q3 to double capacity" OR "Credit growth accelerated to 28% with NIM expansion" OR "Large $50M TCV deal win securing H2 revenue"). If NONE found, state: "⚠️ NO CLEAR FORWARD CATALYST DETECTED"].
+- **🚀 PRIMARY CATALYST / BREAKOUT TRIGGER:** [State in 1-2 BOLD sentences the exact forward-looking trigger driving this stock].
 - **VERDICT LOGIC:** [Provide a 1-2 sentence justification for the overall verdict].
-  - 🟢 **PASS:** Available YoY Sales & EPS > 20%, positive Code 33 acceleration, AND a clear, validated forward catalyst.
-  - 🟡 **WATCHLIST:** Strong growth but NO clear catalyst, a minor confirmed red flag, OR a Catalyst Override applied.
-  - 🔴 **FAIL:** Confirmed Sales/EPS growth < 20%, decelerating growth, or major red flags without a massive catalyst.
 
 #### 2. SUPERPERFORMANCE SCORECARD
 Present this quick-scan summary table (Use "N/A - Not in Document" if missing):
@@ -579,37 +576,7 @@ Present this quick-scan summary table (Use "N/A - Not in Document" if missing):
 ---
 
 ### DETAILED ANALYSIS BREAKDOWN
-
-Use visual status icons at the start of each bullet:
-- 🟢 Clear Pass
-- 🔴 Fail/Red Flag
-- 🟡 Mixed / Catalyst Override Applied
-- ⚠️ Warning/Watch
-- ⚪ Not available in document
-
-Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
-
-#### SECTION 1: Growth Velocity (The Engine)
-* **Latest Quarter YoY Growth:** Is EPS and Sales growth **>20%**? State exact % values.
-* **Code 33 Acceleration:** Are EPS, Sales, AND Net Margins accelerating compared to prior 2-3 quarters or same quarter last year? (**Yes / No / Data Missing**)
-* **Margin Dynamics:** Are Net and Operating Profit Margins expanding or contracting YoY?
-* **Management Guidance:** Did management raise or confirm strong future outlook/guidance in recent Earnings Calls?
-* **Annual Track Record:** Is there a 3-5 year history of annual EPS growth? Are current FY estimates projected to reach a **new all-time high**?
-
-#### SECTION 2: Sector-Adaptive Catalyst & Forward Triggers (Concall & PPT Extraction)
-* **Primary Sector Catalyst:** Identify the primary growth driver based on the industry (e.g., CapEx/Order Book for Industrial; NIM/Credit growth for Banks; Deal wins/Margins for IT; Volume/SSSG/Stores for Retail; FDA/Launches for Pharma).
-* **Catalyst Magnitude & Timeline:** Is this a game-changing trigger taking effect in the next 1-4 quarters? State exact management commentary or guidance.
-* **Institutional Sponsorship (FII/DII Trend):** Did FII, DII, or Mutual Fund shareholding increase in the most recent quarter compared to the previous quarter? (**Yes / No / Data Missing**)
-* **Competitive Advantage & Scalability:** Is the growth model scalable without excessive capital burn?
-* **Market Leadership:** Is the company a market leader (#1 or #2 in its niche) or gaining market share?
-
-#### SECTION 3: Quality of Earnings & Red Flags
-* ⚠️ **Inventory vs. Sales Growth:** Is inventory (especially finished goods) growing faster than sales? State exact growth rate comparison if present (Mark N/A for Banks/Services).
-* ⚠️ **Receivables vs. Sales Growth:** Are accounts receivable growing faster than sales?
-* **Source of Profit:** Is EPS driven by **Top Line revenue**, or by cost-cutting, tax benefits, or "Other Income"?
-* **Tax Rate Distortion:** Was there an artificial boost to EPS from a lower effective tax rate?
-* **Cash Flow vs. Earnings:** Has Operating Cash Flow (CFO) diverged negatively from Net Profit over the last 3 years?
-* **Debt Load & Solvency:** What is the total debt load (or NPA profile for financials), and can cash flows easily service it?
+Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail/Red Flag | 🟡 Mixed/Override | ⚠️ Warning/Watch | ⚪ Not available in document.
 """
 
     try:
@@ -695,8 +662,8 @@ def show_fundamental_modal(ticker_symbol):
 
   if not rep:
     st.info(
-        f"No stored report for **{clean_sym}**. Select its row in the table"
-        " below and click 'Run AI Analysis'!"
+        f"No stored report for **{clean_sym}**. Check its row in the table"
+        " below and click 'Analyze Selected'!"
     )
   else:
     st.subheader(f"📊 {clean_sym} — {rep.get('verdict', 'N/A')}")
@@ -3042,30 +3009,32 @@ with tab_screener:
       )
 
       # ----------------------------------------------------
-      # 🧠 POPUP-FREE BATCH FUNDAMENTAL RUNNER (SCAN TAB)
+      # 🧠 CHECKBOX-DRIVEN FUNDAMENTAL ANALYST (SCAN TAB)
       # ----------------------------------------------------
       st.markdown("---")
-      st.markdown("#### 🧠 Minervini Fundamental AI Analyst Studio")
-      f_col1, f_col2, f_col3, f_col4 = st.columns([1.6, 1.6, 1.2, 1.2])
+      f_col1, f_col2, f_col3 = st.columns([2.0, 1.3, 1.7])
 
       with f_col1:
-        selected_fund_ticker_scan = st.selectbox(
-            "View Stored Report for Stock:",
-            options=df_display["TV_Symbol"].tolist(),
-            key=f"fund_scan_select_{rc}_{sc}",
-        )
-      with f_col2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button(
-            "📖 Open Saved Report Modal",
-            type="secondary",
-            use_container_width=True,
-            key=f"fund_btn_view_scan_{rc}_{sc}",
-        ):
-          show_fundamental_modal(selected_fund_ticker_scan)
+        if len(selected_rows) == 1:
+          active_sym = selected_rows[0]
+          clean_sym_name = active_sym.split(":")[-1].strip().upper()
+          if st.button(
+              f"📖 Open Saved Report Modal ({clean_sym_name})",
+              type="primary",
+              use_container_width=True,
+              key=f"fund_btn_view_scan_{rc}_{sc}",
+          ):
+            show_fundamental_modal(active_sym)
+        else:
+          st.button(
+              "📖 Select a Single Stock Row to Open Report",
+              type="secondary",
+              disabled=True,
+              use_container_width=True,
+              key=f"fund_btn_view_scan_dis_{rc}_{sc}",
+          )
 
-      with f_col3:
-        st.markdown("<br>", unsafe_allow_html=True)
+      with f_col2:
         force_reanalyze_scan = st.checkbox(
             "Force Re-Analyze Existing",
             value=False,
@@ -3073,8 +3042,7 @@ with tab_screener:
             help="If checked, AI will re-fetch Screener PDFs even if a report already exists.",
         )
 
-      with f_col4:
-        st.markdown("<br>", unsafe_allow_html=True)
+      with f_col3:
         run_batch_scan = st.button(
             f"⚡ Analyze Selected ({len(selected_rows)})",
             type="primary",
@@ -3576,30 +3544,32 @@ with tab_watchlists:
     )
 
     # ----------------------------------------------------
-    # 🧠 POPUP-FREE BATCH FUNDAMENTAL RUNNER (WATCHLIST TAB)
+    # 🧠 CHECKBOX-DRIVEN FUNDAMENTAL ANALYST (WATCHLIST TAB)
     # ----------------------------------------------------
     st.markdown("---")
-    st.markdown("#### 🧠 Minervini Fundamental AI Analyst Studio")
-    wf_col1, wf_col2, wf_col3, wf_col4 = st.columns([1.6, 1.6, 1.2, 1.2])
+    wf_col1, wf_col2, wf_col3 = st.columns([2.0, 1.3, 1.7])
 
     with wf_col1:
-      selected_fund_ticker_wl = st.selectbox(
-          "View Stored Report for Stock:",
-          options=merged_df["TV_Symbol"].tolist(),
-          key=f"fund_wl_select_{wsc}",
-      )
-    with wf_col2:
-      st.markdown("<br>", unsafe_allow_html=True)
-      if st.button(
-          "📖 Open Saved Report Modal",
-          type="secondary",
-          use_container_width=True,
-          key=f"fund_btn_view_wl_{wsc}",
-      ):
-        show_fundamental_modal(selected_fund_ticker_wl)
+      if len(sel_symbols) == 1:
+        active_sym_wl = sel_symbols[0]
+        clean_wl_sym_name = active_sym_wl.split(":")[-1].strip().upper()
+        if st.button(
+            f"📖 Open Saved Report Modal ({clean_wl_sym_name})",
+            type="primary",
+            use_container_width=True,
+            key=f"fund_btn_view_wl_{wsc}",
+        ):
+          show_fundamental_modal(active_sym_wl)
+      else:
+        st.button(
+            "📖 Select a Single Stock Row to Open Report",
+            type="secondary",
+            disabled=True,
+            use_container_width=True,
+            key=f"fund_btn_view_wl_dis_{wsc}",
+        )
 
-    with wf_col3:
-      st.markdown("<br>", unsafe_allow_html=True)
+    with wf_col2:
       force_reanalyze_wl = st.checkbox(
           "Force Re-Analyze Existing",
           value=False,
@@ -3607,8 +3577,7 @@ with tab_watchlists:
           help="If checked, AI will re-fetch Screener PDFs even if a report already exists.",
       )
 
-    with wf_col4:
-      st.markdown("<br>", unsafe_allow_html=True)
+    with wf_col3:
       run_batch_wl = st.button(
           f"⚡ Analyze Selected ({len(sel_symbols)})",
           type="primary",
