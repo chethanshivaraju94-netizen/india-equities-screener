@@ -8,7 +8,6 @@ import time
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from google import genai
-from google.genai import types
 import markdown
 import plotly.express as px
 import requests
@@ -526,14 +525,14 @@ def create_pdf_bytes(ticker, report_md):
 
 
 # ==========================================
-# GEMINI FUNDAMENTAL AI ANALYST ENGINE
+# GEMINI FUNDAMENTAL AI ANALYST ENGINE (MATCHING COLAB SCRIPT EXACTLY)
 # ==========================================
 def run_gemini_fundamental_analysis(
     ticker_input, reports_store=None, status_log=None
 ):
   gemini_key = st.secrets.get("GEMINI_API_KEY", "")
   screener_sid = st.secrets.get("SCREENER_SESSION_ID", "")
-  email_addr = st.secrets.get("EMAIL_ADDRESS", "")
+  email_addr = st.secrets.get("EMAIL_ADDRESS", "chethanshivaraju7@gmail.com")
   email_pass = st.secrets.get("EMAIL_APP_PASSWORD", "")
 
   if not gemini_key:
@@ -542,13 +541,14 @@ def run_gemini_fundamental_analysis(
     return None
 
   client = genai.Client(api_key=gemini_key)
+
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
           " (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
       ),
       "Accept": (
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
       ),
       "Referer": "https://www.screener.in/",
   }
@@ -559,7 +559,7 @@ def run_gemini_fundamental_analysis(
       if ":" in str(ticker_input)
       else str(ticker_input).strip().upper()
   )
-  download_dir = f"documents_{clean_ticker}"
+  download_dir = "documents"
   os.makedirs(download_dir, exist_ok=True)
   for f in glob.glob(f"{download_dir}/*"):
     os.remove(f)
@@ -569,17 +569,18 @@ def run_gemini_fundamental_analysis(
   try:
     if status_log:
       status_log.write(f"📡 **{clean_ticker}:** Accessing Screener.in page...")
-    res = requests.get(url, headers=headers, cookies=cookies, timeout=20)
-    if res.status_code != 200:
+    response = requests.get(url, headers=headers, cookies=cookies, timeout=20)
+    if response.status_code != 200:
       if status_log:
         status_log.error(
             f"❌ **{clean_ticker}:** Could not access Screener.in page (HTTP"
-            f" {res.status_code})."
+            f" {response.status_code})."
         )
       return None
 
-    soup = BeautifulSoup(res.content, "html.parser")
+    soup = BeautifulSoup(response.content, "html.parser")
     documents_section = soup.find(id="documents")
+
     if not documents_section:
       if status_log:
         status_log.warning(
@@ -588,9 +589,12 @@ def run_gemini_fundamental_analysis(
       return None
 
     ars, transcripts, ppts = [], [], []
-    for link in documents_section.find_all("a", href=True):
+    links = documents_section.find_all("a", href=True)
+
+    for link in links:
       href = link["href"]
       text = link.get_text(strip=True).lower()
+
       if "financial year" in text or "annual report" in text:
         ars.append(("Annual Report", href))
       elif text == "transcript":
@@ -598,44 +602,63 @@ def run_gemini_fundamental_analysis(
       elif text == "ppt":
         ppts.append(("PPT", href))
 
+    if status_log:
+      status_log.write(
+          f"Discovered: {len(ars)} ARs, {len(transcripts)} Transcripts,"
+          f" {len(ppts)} PPTs."
+      )
+
     state = {"count": 0, "urls": set()}
 
     def try_download(text, href):
       if href in state["urls"]:
         return False
+
       full_url = (
           href
           if href.startswith("http")
           else urljoin("https://www.screener.in", href)
       )
+
       try:
-        doc_res = requests.get(
-            full_url, headers=headers, cookies=cookies, timeout=30
+        doc_response = requests.get(
+            full_url, headers=headers, cookies=cookies, timeout=30, allow_redirects=True
         )
-        if b"%PDF" in doc_res.content[:100]:
+        if b"%PDF" in doc_response.content[:100]:
           file_name = f"screener_doc_{state['count'] + 1}.pdf"
           file_path = os.path.join(download_dir, file_name)
           with open(file_path, "wb") as f:
-            f.write(doc_res.content)
+            f.write(doc_response.content)
           state["count"] += 1
           state["urls"].add(href)
-          time.sleep(0.5)
+          time.sleep(1)
           return True
-      except Exception:
-        pass
+      except Exception as e:
+        if status_log:
+          status_log.write(f"  -> Skipped {text}: Download error - {e}")
+
       return False
 
-    if status_log:
-      status_log.write(
-          f"📥 **{clean_ticker}:** Downloading latest Annual Report,"
-          " Transcripts & PPTs..."
-      )
-    for t, h in ars[:1]:
-      try_download("Annual Report", h)
-    for t, h in transcripts[:4]:
-      try_download("Transcript", h)
-    for t, h in ppts[:4]:
-      try_download("PPT", h)
+    # --- STRICT QUOTAS (MATCHING COLAB SCRIPT) ---
+    ar_count, tr_count, ppt_count = 0, 0, 0
+
+    for t, h in ars:
+      if ar_count >= 1:
+        break
+      if try_download("Annual Report", h):
+        ar_count += 1
+
+    for t, h in transcripts:
+      if tr_count >= 4:
+        break
+      if try_download("Transcript", h):
+        tr_count += 1
+
+    for t, h in ppts:
+      if ppt_count >= 4:
+        break
+      if try_download("PPT", h):
+        ppt_count += 1
 
     pdf_files = glob.glob(f"{download_dir}/*.pdf")
     if not pdf_files:
@@ -650,16 +673,24 @@ def run_gemini_fundamental_analysis(
           f"🤖 **{clean_ticker}:** Uploading {len(pdf_files)} PDFs to Gemini"
           " 2.5 Flash..."
       )
-    uploaded_files = [client.files.upload(file=fp) for fp in pdf_files]
+
+    uploaded_files = []
+    for file_path in pdf_files:
+      uploaded_file = client.files.upload(file=file_path)
+      uploaded_files.append(uploaded_file)
+
     for f in uploaded_files:
       while True:
-        info = client.files.get(name=f.name)
-        if "ACTIVE" in str(info.state).upper():
+        file_info = client.files.get(name=f.name)
+        if "ACTIVE" in str(file_info.state).upper():
           break
-        time.sleep(2)
+        time.sleep(3)
 
-    system_instruction = """
-You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your sole objective is to analyze uploaded Annual Reports, Investor Presentations, and Earnings Call Transcripts to determine if a company meets Minervini's "Superperformance" criteria.
+    if status_log:
+      status_log.write(f"Analyzing **{clean_ticker}** fundamentals...")
+
+    prompt = """
+You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your sole objective is to analyze the provided Annual Report, Investor Presentations, and Earnings Call Transcripts to determine if the company meets Minervini's "Superperformance" criteria.
 
 ### DATA & GROUND TRUTH RULES
 1. Rely ONLY on the uploaded documents and consider ONLY consolidated financial figures.
@@ -678,14 +709,18 @@ You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your
 - **FORWARD-LOOKING vs. BACKWARD-LOOKING:** Prioritize forward-looking triggers (management guidance, upcoming launches, margin expansions, pipeline) found in recent Earnings Calls over historical reasons in old reports.
 - **Base Verdict ONLY on Available Data:** Do not penalize missing data points, but strictly enforce the presence of a tangible growth catalyst.
 
-### MANDATORY REPORT STRUCTURE & COMPLETER RULE (CRITICAL)
-Regardless of whether your verdict is 🟢 PASS, 🟡 WATCHLIST, or 🔴 FAIL, you MUST ALWAYS generate ALL FOUR sections below in their entirety. Do NOT abbreviate, truncate, or stop after the scorecard table for failing stocks.
+---
+
+### OUTPUT FORMAT & VISUAL HIERARCHY
 
 #### 1. HEADER & INSTANT VERDICT
 Provide the company name and an instant decision verdict:
 - **MINERVINI FUNDAMENTAL VERDICT:** [Insert 🟢 PASS / 🟡 WATCHLIST / 🔴 FAIL]
-- **🚀 PRIMARY CATALYST / BREAKOUT TRIGGER:** [State in 1-2 BOLD sentences the exact forward-looking trigger driving this stock. If NONE found, state: "⚠️ NO CLEAR FORWARD CATALYST DETECTED"].
+- **🚀 PRIMARY CATALYST / BREAKOUT TRIGGER:** [State in 1-2 BOLD sentences the exact forward-looking trigger driving this stock (e.g., "New plant going live in Q3 to double capacity" OR "Credit growth accelerated to 28% with NIM expansion" OR "Large $50M TCV deal win securing H2 revenue"). If NONE found, state: "⚠️ NO CLEAR FORWARD CATALYST DETECTED"].
 - **VERDICT LOGIC:** [Provide a 1-2 sentence justification for the overall verdict].
+  - 🟢 **PASS:** Available YoY Sales & EPS > 20%, positive Code 33 acceleration, AND a clear, validated forward catalyst.
+  - 🟡 **WATCHLIST:** Strong growth but NO clear catalyst, a minor confirmed red flag, OR a Catalyst Override applied.
+  - 🔴 **FAIL:** Confirmed Sales/EPS growth < 20%, decelerating growth, or major red flags without a massive catalyst.
 
 #### 2. SUPERPERFORMANCE SCORECARD
 Present this quick-scan summary table (Use "N/A - Not in Document" if missing):
@@ -706,62 +741,68 @@ Present this quick-scan summary table (Use "N/A - Not in Document" if missing):
   - [Bullet 2]
   - [Bullet 3]
 
-#### 4. DETAILED ANALYSIS BREAKDOWN
-Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail/Red Flag | 🟡 Mixed/Override | ⚠️ Warning/Watch | ⚪ Not available in document. Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
+---
 
-##### SECTION 1: Growth Velocity (The Engine)
-* **Annual Revenue Growth (Consolidated):** State FY revenue and YoY % increase.
-* **Annual EPS Growth (Consolidated):** State FY EPS and YoY % increase.
-* **Annual PAT Growth (Consolidated):** State FY PAT and YoY % increase.
-* **Quarterly Revenue Growth (YoY, Consolidated):** Is latest quarter revenue growth >20%? State exact % values.
-* **Quarterly EPS Growth (YoY, Consolidated):** Is latest quarter EPS growth >20%? State exact % values.
-* **Quarterly PAT Growth (YoY, Consolidated):** State exact PAT and YoY % growth.
+### DETAILED ANALYSIS BREAKDOWN
+
+Use visual status icons at the start of each bullet:
+- 🟢 Clear Pass
+- 🔴 Fail/Red Flag
+- 🟡 Mixed / Catalyst Override Applied
+- ⚠️ Warning/Watch
+- ⚪ Not available in document
+
+Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
+
+#### SECTION 1: Growth Velocity (The Engine)
+* **Latest Quarter YoY Growth:** Is EPS and Sales growth **>20%**? State exact % values.
 * **Code 33 Acceleration:** Are EPS, Sales, AND Net Margins accelerating compared to prior 2-3 quarters or same quarter last year? (**Yes / No / Data Missing**)
 * **Margin Dynamics:** Are Net and Operating Profit Margins expanding or contracting YoY?
+* **Management Guidance:** Did management raise or confirm strong future outlook/guidance in recent Earnings Calls?
+* **Annual Track Record:** Is there a 3-5 year history of annual EPS growth? Are current FY estimates projected to reach a **new all-time high**?
 
-##### SECTION 2: Sector-Adaptive Catalyst & Forward Triggers (Concall & PPT Extraction)
-* **Primary Sector Catalyst:** Identify the primary growth driver based on the industry.
+#### SECTION 2: Sector-Adaptive Catalyst & Forward Triggers (Concall & PPT Extraction)
+* **Primary Sector Catalyst:** Identify the primary growth driver based on the industry (e.g., CapEx/Order Book for Industrial; NIM/Credit growth for Banks; Deal wins/Margins for IT; Volume/SSSG/Stores for Retail; FDA/Launches for Pharma).
 * **Catalyst Magnitude & Timeline:** Is this a game-changing trigger taking effect in the next 1-4 quarters? State exact management commentary or guidance.
 * **Institutional Sponsorship (FII/DII Trend):** Did FII, DII, or Mutual Fund shareholding increase in the most recent quarter compared to the previous quarter? (**Yes / No / Data Missing**)
 * **Competitive Advantage & Scalability:** Is the growth model scalable without excessive capital burn?
-* **Market Leadership & Order Book:** Is the company a market leader (#1 or #2 in its niche) or gaining market share? State exact order book figures if present.
+* **Market Leadership:** Is the company a market leader (#1 or #2 in its niche) or gaining market share?
 
-##### SECTION 3: Quality of Earnings & Red Flags
-* **Cash Flow from Operations:** Net cash inflow from operating activities (CFO) trend and comparison with Net Profit.
-* **Debt Load & Solvency:** Debt to Equity ratio, NPA profile for financials, and interest coverage.
-* ⚠️ **Inventory vs. Sales Growth:** Is inventory growing faster than sales? State exact growth rate comparison if present.
-* ⚠️ **Receivables vs. Sales Growth:** Are accounts receivable growing faster than sales? State exact trends.
-* **Tax Rate Distortion & Source of Profit:** Was there an artificial boost to EPS from lower effective tax rate or other non-operating income?
+#### SECTION 3: Quality of Earnings & Red Flags
+* ⚠️ **Inventory vs. Sales Growth:** Is inventory (especially finished goods) growing faster than sales? State exact growth rate comparison if present (Mark N/A for Banks/Services).
+* ⚠️ **Receivables vs. Sales Growth:** Are accounts receivable growing faster than sales?
+* **Source of Profit:** Is EPS driven by **Top Line revenue**, or by cost-cutting, tax benefits, or "Other Income"?
+* **Tax Rate Distortion:** Was there an artificial boost to EPS from a lower effective tax rate?
+* **Cash Flow vs. Earnings:** Has Operating Cash Flow (CFO) diverged negatively from Net Profit over the last 3 years?
+* **Debt Load & Solvency:** What is the total debt load (or NPA profile for financials), and can cash flows easily service it?
 """
 
-    user_prompt = f"""
-Analyze {clean_ticker} using all uploaded Screener.in documents. Generate the complete, uncompromising Mark Minervini Fundamental Analysis Report following all 4 mandatory sections in the system instructions without omitting any section. Even if the verdict is 🔴 FAIL or 🟡 WATCHLIST, you MUST generate the full BLUF and all Detailed Analysis Breakdown sections.
-"""
-
-    gen_config = types.GenerateContentConfig(
-        system_instruction=system_instruction,
-        temperature=0.1,
-        max_output_tokens=8192,
-    )
-
+    # --- GRACEFUL DOWNGRADE LOGIC (MATCHING COLAB SCRIPT) ---
     try:
       response = client.models.generate_content(
           model="gemini-2.5-flash",
-          contents=[user_prompt] + uploaded_files,
-          config=gen_config,
+          contents=[prompt] + uploaded_files,
+          config={"service_tier": "flex", "http_options": {"timeout": 900000}},
       )
     except Exception as e:
       if "tokens allowed" in str(e) or "400" in str(e):
+        if status_log:
+          status_log.write(
+              f"   -> OVERLOAD: {clean_ticker} documents are too massive."
+              " Retrying with top 4 most recent files..."
+          )
+        reduced_files = uploaded_files[:4]
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=[user_prompt] + uploaded_files[:3],
-            config=gen_config,
+            contents=[prompt] + reduced_files,
+            config={"service_tier": "flex", "http_options": {"timeout": 900000}},
         )
       else:
         raise e
 
     analysis_text = response.text
 
+    # --- EXTRACT VERDICT ---
     verdict_line = ""
     for line in analysis_text.upper().split("\n"):
       if "MINERVINI FUNDAMENTAL VERDICT:" in line or "VERDICT:" in line:
@@ -769,13 +810,13 @@ Analyze {clean_ticker} using all uploaded Screener.in documents. Generate the co
         break
 
     if "PASS" in verdict_line or "🟢" in verdict_line:
-      verdict = "🟢 PASS"
+      verdict = "PASS 🟢"
     elif "WATCHLIST" in verdict_line or "🟡" in verdict_line:
-      verdict = "🟡 WATCHLIST"
+      verdict = "WATCHLIST 🟡"
     elif "FAIL" in verdict_line or "🔴" in verdict_line:
-      verdict = "🔴 FAIL"
+      verdict = "FAIL 🔴"
     else:
-      verdict = "🟣 Review Needed"
+      verdict = "Review Needed"
 
     today_str = time.strftime("%Y-%m-%d")
     report_entry = {
@@ -798,26 +839,35 @@ Analyze {clean_ticker} using all uploaded Screener.in documents. Generate the co
           f" **{verdict}** (Saved to Gist)"
       )
 
-    # Optional Email Sender
+    # --- SEND INDIVIDUAL HTML EMAIL (MATCHING COLAB SCRIPT) ---
     if email_addr and email_pass:
       try:
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
 
         html_text = markdown.markdown(analysis_text, extensions=["tables"])
+        subject = f"{clean_ticker} - {verdict}"
+
         msg = MIMEMultipart("alternative")
         msg["From"] = email_addr
         msg["To"] = email_addr
-        msg["Subject"] = f"{clean_ticker} - {verdict}"
-        msg.attach(MIMEText(analysis_text, "plain"))
-        msg.attach(MIMEText(html_text, "html"))
+        msg["Subject"] = subject
+
+        part1 = MIMEText(analysis_text, "plain")
+        part2 = MIMEText(html_text, "html")
+        msg.attach(part1)
+        msg.attach(part2)
+
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(email_addr, email_pass)
         server.send_message(msg)
         server.quit()
-      except Exception:
-        pass
+        if status_log:
+          status_log.write(f"📧 Email report delivered for {clean_ticker}.")
+      except Exception as mail_err:
+        if status_log:
+          status_log.write(f"⚠️ Email dispatch warning: {mail_err}")
 
     return report_entry
 
