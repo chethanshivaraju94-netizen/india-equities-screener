@@ -4,7 +4,6 @@ import json
 import os
 import re
 import smtplib
-import threading
 import time
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
@@ -411,63 +410,18 @@ if "scan_sel_counter" not in st.session_state:
 if "wl_sel_counter" not in st.session_state:
   st.session_state.wl_sel_counter = 0
 
-# ==========================================
-# UNSTOPPABLE BACKGROUND AI WORKER TRACKER
-# ==========================================
-GLOBAL_AI_WORKER_STATE = {
-    "is_running": False,
-    "total": 0,
-    "completed": 0,
-    "current_ticker": "",
-    "message": "",
-    "last_updated": 0,
-}
-
-
-def background_ai_worker(symbols_list, force_reanalyze, reports_dict):
-  GLOBAL_AI_WORKER_STATE["is_running"] = True
-  GLOBAL_AI_WORKER_STATE["total"] = len(symbols_list)
-  GLOBAL_AI_WORKER_STATE["completed"] = 0
-
-  for idx, sym in enumerate(symbols_list):
-    clean_sym = sym.split(":")[-1].strip().upper()
-    GLOBAL_AI_WORKER_STATE["current_ticker"] = clean_sym
-    GLOBAL_AI_WORKER_STATE["message"] = (
-        f"Analyzing ({idx + 1}/{len(symbols_list)}): {clean_sym} — Downloading"
-        " PDFs & Running Gemini..."
-    )
-
-    if clean_sym in reports_dict and not force_reanalyze:
-      GLOBAL_AI_WORKER_STATE["completed"] += 1
-      continue
-
-    try:
-      new_rep = run_gemini_fundamental_analysis(clean_sym, reports_dict)
-      if new_rep:
-        reports_dict[clean_sym] = new_rep
-    except Exception as e:
-      print(f"Background AI Worker Error ({clean_sym}): {e}")
-
-    GLOBAL_AI_WORKER_STATE["completed"] += 1
-    GLOBAL_AI_WORKER_STATE["last_updated"] = time.time()
-
-  GLOBAL_AI_WORKER_STATE["is_running"] = False
-  GLOBAL_AI_WORKER_STATE["message"] = (
-      f"✅ Completed AI Fundamental Analysis for {len(symbols_list)} stocks!"
-  )
-  GLOBAL_AI_WORKER_STATE["last_updated"] = time.time()
-
 
 # ==========================================
 # GEMINI FUNDAMENTAL AI ANALYST ENGINE
 # ==========================================
-def run_gemini_fundamental_analysis(ticker_input, reports_store=None):
+def run_gemini_fundamental_analysis(ticker_input):
   gemini_key = st.secrets.get("GEMINI_API_KEY", "")
   screener_sid = st.secrets.get("SCREENER_SESSION_ID", "")
   email_addr = st.secrets.get("EMAIL_ADDRESS", "")
   email_pass = st.secrets.get("EMAIL_APP_PASSWORD", "")
 
   if not gemini_key:
+    st.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets!")
     return None
 
   client = genai.Client(api_key=gemini_key)
@@ -498,11 +452,18 @@ def run_gemini_fundamental_analysis(ticker_input, reports_store=None):
   try:
     res = requests.get(url, headers=headers, cookies=cookies, timeout=20)
     if res.status_code != 200:
+      st.error(
+          f"❌ Could not access Screener.in page for {clean_ticker} (HTTP"
+          f" {res.status_code}). Ensure SCREENER_SESSION_ID is valid."
+      )
       return None
 
     soup = BeautifulSoup(res.content, "html.parser")
     documents_section = soup.find(id="documents")
     if not documents_section:
+      st.warning(
+          f"⚠️ No documents section found for {clean_ticker} on Screener.in."
+      )
       return None
 
     ars, transcripts, ppts = [], [], []
@@ -552,6 +513,7 @@ def run_gemini_fundamental_analysis(ticker_input, reports_store=None):
 
     pdf_files = glob.glob(f"{download_dir}/*.pdf")
     if not pdf_files:
+      st.error(f"❌ Could not download any valid PDF reports for {clean_ticker}.")
       return None
 
     uploaded_files = [client.files.upload(file=fp) for fp in pdf_files]
@@ -658,12 +620,8 @@ Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail
         "report_md": analysis_text,
     }
 
-    if reports_store is not None:
-      reports_store[clean_ticker] = report_entry
-      save_fundamental_reports(reports_store)
-    else:
-      st.session_state.fundamental_reports[clean_ticker] = report_entry
-      save_fundamental_reports(st.session_state.fundamental_reports)
+    st.session_state.fundamental_reports[clean_ticker] = report_entry
+    save_fundamental_reports(st.session_state.fundamental_reports)
 
     # Optional Email Sender
     if email_addr and email_pass:
@@ -688,7 +646,8 @@ Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail
 
     return report_entry
 
-  except Exception:
+  except Exception as e:
+    st.error(f"❌ Fundamental Analysis failed for {clean_ticker}: {e}")
     return None
 
 
@@ -714,22 +673,18 @@ def show_fundamental_modal(ticker_symbol):
     )
     st.markdown("---")
     st.markdown(rep.get("report_md", ""))
-    st.markdown("---")
-    if st.button(
-        "🔄 Re-Analyze & Overwrite (Quarterly Refresh)",
-        type="secondary",
-        use_container_width=True,
-    ):
-      with st.spinner(
-          f"📡 Fetching latest Screener.in PDFs & replacing {clean_sym}"
-          " report..."
-      ):
-        updated_rep = run_gemini_fundamental_analysis(
-            clean_sym, st.session_state.fundamental_reports
-        )
-        if updated_rep:
-          st.success("✅ Old report replaced with latest quarterly data!")
-          st.rerun()
+
+
+def get_fundamental_badge(sym_name):
+  clean_sym = (
+      sym_name.split(":")[-1].strip().upper()
+      if ":" in str(sym_name)
+      else str(sym_name).strip().upper()
+  )
+  rep = st.session_state.fundamental_reports.get(clean_sym)
+  if not rep:
+    return "⚪ Not Analyzed"
+  return f"{rep.get('verdict')} ({rep.get('date', '')})"
 
 
 # ==========================================
@@ -1115,6 +1070,79 @@ def style_rotation_tracker(df):
   except Exception:
     pass
   return styler
+
+
+# ==========================================
+# VISUAL WATCHLIST COLOR DOT HELPER
+# ==========================================
+def get_wl_dots(symbol, watchlists_dict):
+  bare_sym = (
+      symbol.split(":")[-1].strip().upper()
+      if ":" in str(symbol)
+      else str(symbol).strip().upper()
+  )
+  dots = []
+  for wl_name, sym_list in watchlists_dict.items():
+    wl_bare_symbols = [s.split(":")[-1].strip().upper() for s in sym_list]
+    if bare_sym in wl_bare_symbols:
+      name_lower = wl_name.lower()
+      if "post breakout" in name_lower or "breakout" in name_lower:
+        dot = "🔵"
+      elif "weekly" in name_lower:
+        dot = "🟡"
+      elif "focus" in name_lower:
+        dot = "🟢"
+      elif "scan bulk" in name_lower or "bulk" in name_lower:
+        dot = "🟠"
+      elif "sold" in name_lower:
+        dot = "🔴"
+      else:
+        dot = "🟣"
+      if dot not in dots:
+        dots.append(dot)
+  return "".join(dots)
+
+
+# ==========================================
+# VISUAL CIRCUIT STOCK BADGE HELPER
+# ==========================================
+def is_circuit_stock_badge(row, bands_map):
+  sym = str(row.get("name", "")).replace("🚨", "").strip().upper()
+  band_val = bands_map.get(sym, "")
+  if band_val in ["2", "5", "10"]:
+    return True
+
+  high = pd.to_numeric(row.get("high"), errors="coerce")
+  low = pd.to_numeric(row.get("low"), errors="coerce")
+  open_p = pd.to_numeric(row.get("open"), errors="coerce")
+  close_p = pd.to_numeric(row.get("close"), errors="coerce")
+  change_p = abs(pd.to_numeric(row.get("change"), errors="coerce"))
+
+  if (
+      pd.notna(high)
+      and pd.notna(low)
+      and high == low
+      and high > 0
+      and pd.notna(change_p)
+      and change_p > 1.5
+  ):
+    return True
+
+  is_locked = (
+      pd.notna(close_p)
+      and pd.notna(high)
+      and pd.notna(low)
+      and (close_p == high or close_p == low)
+      and (high != open_p)
+  )
+  if is_locked and (
+      (1.97 <= change_p <= 2.00)
+      or (4.97 <= change_p <= 5.00)
+      or (9.97 <= change_p <= 10.00)
+  ):
+    return True
+
+  return False
 
 
 # ==========================================
@@ -2874,33 +2902,8 @@ with tab_screener:
           + df_display["name"]
           + "/consolidated/"
       )
-
-      # Fast vectorized map for watchlists
-      wl_dot_map = {}
-      for wl_name, sym_list in st.session_state.watchlists.items():
-        dot = (
-            "🔵"
-            if "breakout" in wl_name.lower()
-            else (
-                "🟢"
-                if "focus" in wl_name.lower()
-                else (
-                    "🟡"
-                    if "weekly" in wl_name.lower()
-                    else (
-                        "🟠"
-                        if "bulk" in wl_name.lower()
-                        else "🔴" if "sold" in wl_name.lower() else "🟣"
-                    )
-                )
-            )
-        )
-        for s in sym_list:
-          bare_s = s.split(":")[-1].strip().upper()
-          wl_dot_map[bare_s] = wl_dot_map.get(bare_s, "") + dot
-
-      df_display["WL_Dots"] = (
-          df_display["name"].str.upper().map(wl_dot_map).fillna("")
+      df_display["WL_Dots"] = df_display["TV_Symbol"].apply(
+          lambda s: get_wl_dots(s, st.session_state.watchlists)
       )
       df_display["S.No."] = df_display.apply(
           lambda r: (
@@ -2911,30 +2914,24 @@ with tab_screener:
           axis=1,
       )
 
-      # Fast circuit badge
-      df_display["_in_band"] = (
-          df_display["name"].str.upper().map(nse_bands_map)
+      # ----------------------------------------------------
+      # ADD VISUAL CIRCUIT BADGE (🚨) TO NAME COLUMN
+      # ----------------------------------------------------
+      df_display["_is_circuit_badge"] = df_display.apply(
+          lambda r: is_circuit_stock_badge(r, nse_bands_map), axis=1
       )
-      cond1 = df_display["_in_band"].isin(["2", "5", "10"])
-      cond2 = (
-          (df_display["high"] == df_display["low"])
-          & (df_display["high"] > 0)
-          & (df_display["change"].abs() > 1.5)
-      )
-      df_display["_is_circuit_badge"] = cond1 | cond2
-      df_display["name"] = df_display["name"].where(
-          ~df_display["_is_circuit_badge"], df_display["name"] + " 🚨"
+      df_display["name"] = df_display.apply(
+          lambda r: (
+              f"{r['name']} 🚨" if r["_is_circuit_badge"] else str(r["name"])
+          ),
+          axis=1,
       )
 
-      # Fast fundamental badge map
-      fund_badge_map = {
-          k: f"{v.get('verdict')} ({v.get('date', '')})"
-          for k, v in st.session_state.fundamental_reports.items()
-      }
-      df_display["Fundamental"] = (
-          df_display["name"].str.replace(" 🚨", "").str.upper().map(
-              fund_badge_map
-          ).fillna("⚪ Not Analyzed")
+      # ----------------------------------------------------
+      # ATTACH PERSISTENT FUNDAMENTAL REPORT BADGE COLUMN
+      # ----------------------------------------------------
+      df_display["Fundamental"] = df_display["name"].apply(
+          get_fundamental_badge
       )
 
       canonical_perf_order = [
@@ -3055,35 +3052,35 @@ with tab_screener:
         )
 
       if run_batch_scan and len(selected_rows) > 0:
-        if not GLOBAL_AI_WORKER_STATE["is_running"]:
-          t = threading.Thread(
-              target=background_ai_worker,
-              args=(
-                  selected_rows,
-                  force_reanalyze_scan,
-                  st.session_state.fundamental_reports,
-              ),
-              daemon=True,
-          )
-          t.start()
-          st.rerun()
+        st.markdown("##### ⏳ Batch Queue Running...")
+        p_bar = st.progress(0.0)
+        status_msg = st.empty()
 
-      if GLOBAL_AI_WORKER_STATE["is_running"]:
-        st.info(
-            "⚙️ **Background AI Worker Active:**"
-            f" {GLOBAL_AI_WORKER_STATE['message']} *(You can freely"
-            " check/uncheck boxes or switch watchlists — analysis will not"
-            " abort!)*"
+        for idx, sym in enumerate(selected_rows):
+          clean_sym = sym.split(":")[-1].strip().upper()
+          if (
+              clean_sym in st.session_state.fundamental_reports
+              and not force_reanalyze_scan
+          ):
+            status_msg.info(
+                f"⏩ Skipping {clean_sym} (Report already exists). Check 'Force"
+                " Re-Analyze' to overwrite."
+            )
+          else:
+            status_msg.warning(
+                f"📡 Processing ({idx + 1}/{len(selected_rows)}): **{clean_sym}**"
+                " — Downloading Screener.in PDFs & Analyzing with Gemini..."
+            )
+            run_gemini_fundamental_analysis(clean_sym)
+
+          p_bar.progress((idx + 1) / len(selected_rows))
+
+        status_msg.success(
+            f"✅ Finished fundamental processing for {len(selected_rows)}"
+            " selected stocks!"
         )
-        st.progress(
-            GLOBAL_AI_WORKER_STATE["completed"]
-            / max(1, GLOBAL_AI_WORKER_STATE["total"])
-        )
-      elif (
-          GLOBAL_AI_WORKER_STATE["message"]
-          and time.time() - GLOBAL_AI_WORKER_STATE["last_updated"] < 60
-      ):
-        st.success(GLOBAL_AI_WORKER_STATE["message"])
+        time.sleep(1)
+        st.rerun()
 
       st.markdown("---")
       cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
@@ -3469,32 +3466,8 @@ with tab_watchlists:
         + merged_df["name"]
         + "/consolidated/"
     )
-
-    wl_dot_map_wl = {}
-    for wl_name, sym_list in st.session_state.watchlists.items():
-      dot = (
-          "🔵"
-          if "breakout" in wl_name.lower()
-          else (
-              "🟢"
-              if "focus" in wl_name.lower()
-              else (
-                  "🟡"
-                  if "weekly" in wl_name.lower()
-                  else (
-                      "🟠"
-                      if "bulk" in wl_name.lower()
-                      else "🔴" if "sold" in wl_name.lower() else "🟣"
-                  )
-              )
-          )
-      )
-      for s in sym_list:
-        bare_s = s.split(":")[-1].strip().upper()
-        wl_dot_map_wl[bare_s] = wl_dot_map_wl.get(bare_s, "") + dot
-
-    merged_df["WL_Dots"] = (
-        merged_df["name"].str.upper().map(wl_dot_map_wl).fillna("")
+    merged_df["WL_Dots"] = merged_df["TV_Symbol"].apply(
+        lambda s: get_wl_dots(s, st.session_state.watchlists)
     )
     merged_df["S.No."] = merged_df.apply(
         lambda r: (
@@ -3509,24 +3482,18 @@ with tab_watchlists:
     merged_df["_is_circuit_badge"] = merged_df.apply(
         lambda r: is_circuit_stock_badge(r, nse_bands_map), axis=1
     )
-    merged_df["name"] = merged_df["name"].where(
-        ~merged_df["_is_circuit_badge"], merged_df["name"] + " 🚨"
+    merged_df["name"] = merged_df.apply(
+        lambda r: (
+            f"{r['name']} 🚨" if r["_is_circuit_badge"] else str(r["name"])
+        ),
+        axis=1,
     )
 
     # ----------------------------------------------------
     # ATTACH PERSISTENT FUNDAMENTAL REPORT BADGE COLUMN
     # ----------------------------------------------------
-    merged_df["Fundamental"] = (
-        merged_df["name"]
-        .str.replace(" 🚨", "")
-        .str.upper()
-        .map(
-            {
-                k: f"{v.get('verdict')} ({v.get('date', '')})"
-                for k, v in st.session_state.fundamental_reports.items()
-            }
-        )
-        .fillna("⚪ Not Analyzed")
+    merged_df["Fundamental"] = merged_df["name"].apply(
+        get_fundamental_badge
     )
 
     wl_cols = [
@@ -3620,34 +3587,35 @@ with tab_watchlists:
       )
 
     if run_batch_wl and len(sel_symbols) > 0:
-      if not GLOBAL_AI_WORKER_STATE["is_running"]:
-        t = threading.Thread(
-            target=background_ai_worker,
-            args=(
-                sel_symbols,
-                force_reanalyze_wl,
-                st.session_state.fundamental_reports,
-            ),
-            daemon=True,
-        )
-        t.start()
-        st.rerun()
+      st.markdown("##### ⏳ Batch Queue Running...")
+      p_bar = st.progress(0.0)
+      status_msg = st.empty()
 
-    if GLOBAL_AI_WORKER_STATE["is_running"]:
-      st.info(
-          "⚙️ **Background AI Worker Active:**"
-          f" {GLOBAL_AI_WORKER_STATE['message']} *(You can freely check/uncheck"
-          " boxes or switch watchlists — analysis will not abort!)*"
+      for idx, sym in enumerate(sel_symbols):
+        clean_sym = sym.split(":")[-1].strip().upper()
+        if (
+            clean_sym in st.session_state.fundamental_reports
+            and not force_reanalyze_wl
+        ):
+          status_msg.info(
+              f"⏩ Skipping {clean_sym} (Report already exists). Check 'Force"
+              " Re-Analyze' to overwrite."
+          )
+        else:
+          status_msg.warning(
+              f"📡 Processing ({idx + 1}/{len(sel_symbols)}): **{clean_sym}** —"
+              " Downloading Screener.in PDFs & Analyzing with Gemini..."
+          )
+          run_gemini_fundamental_analysis(clean_sym)
+
+        p_bar.progress((idx + 1) / len(sel_symbols))
+
+      status_msg.success(
+          f"✅ Finished fundamental processing for {len(sel_symbols)} selected"
+          " stocks!"
       )
-      st.progress(
-          GLOBAL_AI_WORKER_STATE["completed"]
-          / max(1, GLOBAL_AI_WORKER_STATE["total"])
-      )
-    elif (
-        GLOBAL_AI_WORKER_STATE["message"]
-        and time.time() - GLOBAL_AI_WORKER_STATE["last_updated"] < 60
-    ):
-      st.success(GLOBAL_AI_WORKER_STATE["message"])
+      time.sleep(1)
+      st.rerun()
 
     c_rem, c_clr, c_promo_sel, c_promo_btn = st.columns([1.5, 1.2, 2.0, 1.5])
     with c_rem:
