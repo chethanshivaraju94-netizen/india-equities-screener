@@ -2949,32 +2949,8 @@ with tab_screener:
           + df_display["name"]
           + "/consolidated/"
       )
-
-      wl_dot_map = {}
-      for wl_name, sym_list in st.session_state.watchlists.items():
-        dot = (
-            "🔵"
-            if "breakout" in wl_name.lower()
-            else (
-                "🟢"
-                if "focus" in wl_name.lower()
-                else (
-                    "🟡"
-                    if "weekly" in wl_name.lower()
-                    else (
-                        "🟠"
-                        if "bulk" in wl_name.lower()
-                        else "🔴" if "sold" in wl_name.lower() else "🟣"
-                    )
-                )
-            )
-        )
-        for s in sym_list:
-          bare_s = s.split(":")[-1].strip().upper()
-          wl_dot_map[bare_s] = wl_dot_map.get(bare_s, "") + dot
-
-      df_display["WL_Dots"] = (
-          df_display["name"].str.upper().map(wl_dot_map).fillna("")
+      df_display["WL_Dots"] = df_display["TV_Symbol"].apply(
+          lambda s: get_wl_dots(s, st.session_state.watchlists)
       )
       df_display["S.No."] = df_display.apply(
           lambda r: (
@@ -2985,28 +2961,17 @@ with tab_screener:
           axis=1,
       )
 
-      df_display["_in_band"] = (
-          df_display["name"].str.upper().map(nse_bands_map)
+      # ----------------------------------------------------
+      # ADD VISUAL CIRCUIT BADGE (🚨) TO NAME COLUMN
+      # ----------------------------------------------------
+      df_display["_is_circuit_badge"] = df_display.apply(
+          lambda r: is_circuit_stock_badge(r, nse_bands_map), axis=1
       )
-      cond1 = df_display["_in_band"].isin(["2", "5", "10"])
-      cond2 = (
-          (df_display["high"] == df_display["low"])
-          & (df_display["high"] > 0)
-          & (df_display["change"].abs() > 1.5)
-      )
-      df_display["_is_circuit_badge"] = cond1 | cond2
-      df_display["name"] = df_display["name"].where(
-          ~df_display["_is_circuit_badge"], df_display["name"] + " 🚨"
-      )
-
-      fund_badge_map = {
-          k: f"{v.get('verdict')} ({v.get('date', '')})"
-          for k, v in st.session_state.fundamental_reports.items()
-      }
-      df_display["Fundamental"] = (
-          df_display["name"].str.replace(" 🚨", "").str.upper().map(
-              fund_badge_map
-          ).fillna("⚪ Not Analyzed")
+      df_display["name"] = df_display.apply(
+          lambda r: (
+              f"{r['name']} 🚨" if r["_is_circuit_badge"] else str(r["name"])
+          ),
+          axis=1,
       )
 
       canonical_perf_order = [
@@ -3041,7 +3006,6 @@ with tab_screener:
               "S.No.",
               "TV_Symbol",
               "name",
-              "Fundamental",
               "Close",
               "Change %",
               "ADR %",
@@ -3082,88 +3046,6 @@ with tab_screener:
       selected_rows = parse_table_selection_multi(
           table_ev_scan, df_display, "TV_Symbol"
       )
-
-      # ----------------------------------------------------
-      # 🧠 CHECKBOX-DRIVEN FUNDAMENTAL ANALYST (SCAN TAB)
-      # ----------------------------------------------------
-      st.markdown("---")
-      f_col1, f_col2, f_col3 = st.columns([2.0, 1.3, 1.7])
-
-      with f_col1:
-        if len(selected_rows) == 1:
-          active_sym = selected_rows[0]
-          clean_sym_name = active_sym.split(":")[-1].strip().upper()
-          if st.button(
-              f"📖 Open Saved Report Modal ({clean_sym_name})",
-              type="primary",
-              use_container_width=True,
-              key=f"fund_btn_view_scan_{rc}_{sc}",
-          ):
-            show_fundamental_modal(active_sym)
-        else:
-          st.button(
-              "📖 Select a Single Stock Row to Open Report",
-              type="secondary",
-              disabled=True,
-              use_container_width=True,
-              key=f"fund_btn_view_scan_dis_{rc}_{sc}",
-          )
-
-      with f_col2:
-        force_reanalyze_scan = st.checkbox(
-            "Force Re-Analyze Existing",
-            value=False,
-            key=f"force_scan_{rc}_{sc}",
-            help="If checked, AI will re-fetch Screener PDFs even if a report already exists.",
-        )
-
-      with f_col3:
-        run_batch_scan = st.button(
-            f"⚡ Analyze Selected ({len(selected_rows)})",
-            type="primary",
-            use_container_width=True,
-            disabled=len(selected_rows) == 0,
-            key=f"fund_btn_run_scan_{rc}_{sc}",
-        )
-
-      if run_batch_scan and len(selected_rows) > 0:
-        with st.status(
-            "🧠 Minervini Fundamental AI Analyst — Active Queue",
-            expanded=True,
-        ) as status_box:
-          p_bar = st.progress(0.0)
-          for idx, sym in enumerate(selected_rows):
-            clean_sym = sym.split(":")[-1].strip().upper()
-            if (
-                clean_sym in st.session_state.fundamental_reports
-                and not force_reanalyze_scan
-            ):
-              status_box.write(
-                  f"⏩ **[{idx + 1}/{len(selected_rows)}] {clean_sym}:** Report"
-                  " already exists in Gist. (Check 'Force Re-Analyze' to"
-                  " overwrite)"
-              )
-            else:
-              status_box.write(
-                  f"⚙️ **[{idx + 1}/{len(selected_rows)}] {clean_sym}:**"
-                  " Downloading Screener.in PDFs & Running Gemini 2.5"
-                  " Flash..."
-              )
-              run_gemini_fundamental_analysis(
-                  clean_sym,
-                  st.session_state.fundamental_reports,
-                  status_log=status_box,
-              )
-
-            p_bar.progress((idx + 1) / len(selected_rows))
-
-          status_box.update(
-              label="✅ Batch AI Analysis Complete! Updating Table...",
-              state="complete",
-              expanded=True,
-          )
-          time.sleep(1.5)
-          st.rerun()
 
       st.markdown("---")
       cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
@@ -3549,32 +3431,8 @@ with tab_watchlists:
         + merged_df["name"]
         + "/consolidated/"
     )
-
-    wl_dot_map_wl = {}
-    for wl_name, sym_list in st.session_state.watchlists.items():
-      dot = (
-          "🔵"
-          if "breakout" in wl_name.lower()
-          else (
-              "🟢"
-              if "focus" in wl_name.lower()
-              else (
-                  "🟡"
-                  if "weekly" in wl_name.lower()
-                  else (
-                      "🟠"
-                      if "bulk" in wl_name.lower()
-                      else "🔴" if "sold" in wl_name.lower() else "🟣"
-                  )
-              )
-          )
-      )
-      for s in sym_list:
-        bare_s = s.split(":")[-1].strip().upper()
-        wl_dot_map_wl[bare_s] = wl_dot_map_wl.get(bare_s, "") + dot
-
-    merged_df["WL_Dots"] = (
-        merged_df["name"].str.upper().map(wl_dot_map_wl).fillna("")
+    merged_df["WL_Dots"] = merged_df["TV_Symbol"].apply(
+        lambda s: get_wl_dots(s, st.session_state.watchlists)
     )
     merged_df["S.No."] = merged_df.apply(
         lambda r: (
@@ -3589,31 +3447,17 @@ with tab_watchlists:
     merged_df["_is_circuit_badge"] = merged_df.apply(
         lambda r: is_circuit_stock_badge(r, nse_bands_map), axis=1
     )
-    merged_df["name"] = merged_df["name"].where(
-        ~merged_df["_is_circuit_badge"], merged_df["name"] + " 🚨"
-    )
-
-    # ----------------------------------------------------
-    # ATTACH PERSISTENT FUNDAMENTAL REPORT BADGE COLUMN
-    # ----------------------------------------------------
-    merged_df["Fundamental"] = (
-        merged_df["name"]
-        .str.replace(" 🚨", "")
-        .str.upper()
-        .map(
-            {
-                k: f"{v.get('verdict')} ({v.get('date', '')})"
-                for k, v in st.session_state.fundamental_reports.items()
-            }
-        )
-        .fillna("⚪ Not Analyzed")
+    merged_df["name"] = merged_df.apply(
+        lambda r: (
+            f"{r['name']} 🚨" if r["_is_circuit_badge"] else str(r["name"])
+        ),
+        axis=1,
     )
 
     wl_cols = [
         "S.No.",
         "TV_Symbol",
         "name",
-        "Fundamental",
         "Close",
         "Change %",
         "ADR %",
@@ -3655,87 +3499,6 @@ with tab_watchlists:
     sel_symbols = parse_table_selection_multi(
         wl_table_event, merged_df, "TV_Symbol"
     )
-
-    # ----------------------------------------------------
-    # 🧠 CHECKBOX-DRIVEN FUNDAMENTAL ANALYST (WATCHLIST TAB)
-    # ----------------------------------------------------
-    st.markdown("---")
-    wf_col1, wf_col2, wf_col3 = st.columns([2.0, 1.3, 1.7])
-
-    with wf_col1:
-      if len(sel_symbols) == 1:
-        active_sym_wl = sel_symbols[0]
-        clean_wl_sym_name = active_sym_wl.split(":")[-1].strip().upper()
-        if st.button(
-            f"📖 Open Saved Report Modal ({clean_wl_sym_name})",
-            type="primary",
-            use_container_width=True,
-            key=f"fund_btn_view_wl_{wsc}",
-        ):
-          show_fundamental_modal(active_sym_wl)
-      else:
-        st.button(
-            "📖 Select a Single Stock Row to Open Report",
-            type="secondary",
-            disabled=True,
-            use_container_width=True,
-            key=f"fund_btn_view_wl_dis_{wsc}",
-        )
-
-    with wf_col2:
-      force_reanalyze_wl = st.checkbox(
-          "Force Re-Analyze Existing",
-          value=False,
-          key=f"force_wl_{wsc}",
-          help="If checked, AI will re-fetch Screener PDFs even if a report already exists.",
-      )
-
-    with wf_col3:
-      run_batch_wl = st.button(
-          f"⚡ Analyze Selected ({len(sel_symbols)})",
-          type="primary",
-          use_container_width=True,
-          disabled=len(sel_symbols) == 0,
-          key=f"fund_btn_run_wl_{wsc}",
-      )
-
-    if run_batch_wl and len(sel_symbols) > 0:
-      with st.status(
-          "🧠 Minervini Fundamental AI Analyst — Active Queue",
-          expanded=True,
-      ) as status_box_wl:
-        p_bar = st.progress(0.0)
-        for idx, sym in enumerate(sel_symbols):
-          clean_sym = sym.split(":")[-1].strip().upper()
-          if (
-              clean_sym in st.session_state.fundamental_reports
-              and not force_reanalyze_wl
-          ):
-            status_box_wl.write(
-                f"⏩ **[{idx + 1}/{len(sel_symbols)}] {clean_sym}:** Report"
-                " already exists in Gist. (Check 'Force Re-Analyze' to"
-                " overwrite)"
-            )
-          else:
-            status_box_wl.write(
-                f"⚙️ **[{idx + 1}/{len(sel_symbols)}] {clean_sym}:**"
-                " Downloading Screener.in PDFs & Running Gemini 2.5 Flash..."
-            )
-            run_gemini_fundamental_analysis(
-                clean_sym,
-                st.session_state.fundamental_reports,
-                status_log=status_box_wl,
-            )
-
-          p_bar.progress((idx + 1) / len(sel_symbols))
-
-        status_box_wl.update(
-            label="✅ Batch AI Analysis Complete! Updating Table...",
-            state="complete",
-            expanded=True,
-        )
-        time.sleep(1.5)
-        st.rerun()
 
     c_rem, c_clr, c_promo_sel, c_promo_btn = st.columns([1.5, 1.2, 2.0, 1.5])
     with c_rem:
