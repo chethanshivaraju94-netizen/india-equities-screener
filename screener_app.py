@@ -1329,9 +1329,9 @@ def color_scale_2pt(
     r, g, b = c_max
   else:
     ratio = (v - v_min) / max((v_max - v_min), 1e-6)
-    r = int(c_min[0] + (c_mid[0] - c_min[0]) * ratio)
-    g = int(c_min[1] + (c_mid[1] - c_min[1]) * ratio)
-    b = int(c_mid[2] + (c_max[2] - c_mid[2]) * ratio)
+    r = int(c_min[0] + (c_max[0] - c_min[0]) * ratio)
+    g = int(c_min[1] + (c_max[1] - c_min[1]) * ratio)
+    b = int(c_min[2] + (c_max[2] - c_min[2]) * ratio)
   return f"background-color: #{r:02X}{g:02X}{b:02X}; color: #000000;"
 
 
