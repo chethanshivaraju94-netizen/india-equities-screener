@@ -1,7 +1,14 @@
+import glob
 import io
 import json
 import os
 import re
+import smtplib
+import time
+from urllib.parse import urljoin
+from bs4 import BeautifulSoup
+from google import genai
+import markdown
 import plotly.express as px
 import requests
 import pandas as pd
@@ -22,7 +29,6 @@ st.set_page_config(
 # ==========================================
 TABLE_CUSTOM_CSS = """
 <style>
-/* Sleek styling for Streamlit native HTML tables (st.table) in Tab 3 */
 div[data-testid="stTable"] {
     overflow-x: auto !important;
 }
@@ -49,7 +55,6 @@ div[data-testid="stTable"] td {
     border-bottom: 1px solid #2B2F3E !important;
     min-width: 85px !important;
 }
-/* Lock the First Column (Date / Sector) so 2026-08-06 never breaks into two lines */
 div[data-testid="stTable"] th:nth-child(1),
 div[data-testid="stTable"] td:nth-child(1) {
     text-align: left !important;
@@ -67,6 +72,7 @@ st.markdown(TABLE_CUSTOM_CSS, unsafe_allow_html=True)
 # ==========================================
 WATCHLIST_FILE = "local_watchlists.json"
 PRESETS_FILE = "local_filter_presets.json"
+REPORTS_FILE = "local_fundamental_reports.json"
 
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
 GIST_ID = st.secrets.get("GIST_ID", None)
@@ -330,6 +336,63 @@ def save_filter_presets(presets_dict):
       pass
 
 
+# ==========================================
+# GIST PERSISTENCE FOR FUNDAMENTAL REPORTS
+# ==========================================
+def load_fundamental_reports():
+  if GITHUB_TOKEN and GIST_ID:
+    try:
+      headers = {
+          "Authorization": f"token {GITHUB_TOKEN}",
+          "Accept": "application/vnd.github.v3+json",
+      }
+      res = requests.get(
+          f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5
+      )
+      if res.status_code == 200:
+        gist_data = res.json()
+        if REPORTS_FILE in gist_data["files"]:
+          content = gist_data["files"][REPORTS_FILE]["content"]
+          return json.loads(content)
+    except Exception:
+      pass
+
+  if os.path.exists(REPORTS_FILE):
+    try:
+      with open(REPORTS_FILE, "r") as f:
+        return json.load(f)
+    except Exception:
+      pass
+
+  return {}
+
+
+def save_fundamental_reports(reports_dict):
+  try:
+    with open(REPORTS_FILE, "w") as f:
+      json.dump(reports_dict, f, indent=2)
+  except Exception:
+    pass
+
+  if GITHUB_TOKEN and GIST_ID:
+    try:
+      headers = {
+          "Authorization": f"token {GITHUB_TOKEN}",
+          "Accept": "application/vnd.github.v3+json",
+      }
+      payload = {
+          "files": {REPORTS_FILE: {"content": json.dumps(reports_dict, indent=2)}}
+      }
+      requests.patch(
+          f"https://api.github.com/gists/{GIST_ID}",
+          headers=headers,
+          json=payload,
+          timeout=5,
+      )
+    except Exception:
+      pass
+
+
 if "watchlists" not in st.session_state:
   st.session_state.watchlists = load_watchlists()
 if "active_watchlist_name" not in st.session_state:
@@ -338,12 +401,346 @@ if "active_watchlist_name" not in st.session_state:
   )[0]
 if "filter_presets" not in st.session_state:
   st.session_state.filter_presets = load_filter_presets()
+if "fundamental_reports" not in st.session_state:
+  st.session_state.fundamental_reports = load_fundamental_reports()
 if "reset_counter" not in st.session_state:
   st.session_state.reset_counter = 0
 if "scan_sel_counter" not in st.session_state:
   st.session_state.scan_sel_counter = 0
 if "wl_sel_counter" not in st.session_state:
   st.session_state.wl_sel_counter = 0
+
+
+# ==========================================
+# GEMINI FUNDAMENTAL AI ANALYST & SCRAPER
+# ==========================================
+def run_gemini_fundamental_analysis(ticker_input):
+  gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+  screener_sid = st.secrets.get("SCREENER_SESSION_ID", "")
+  email_addr = st.secrets.get("EMAIL_ADDRESS", "")
+  email_pass = st.secrets.get("EMAIL_APP_PASSWORD", "")
+
+  if not gemini_key:
+    st.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets!")
+    return None
+
+  client = genai.Client(api_key=gemini_key)
+  headers = {
+      "User-Agent": (
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+          " (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+      ),
+      "Accept": (
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      ),
+      "Referer": "https://www.screener.in/",
+  }
+  cookies = {"sessionid": screener_sid}
+
+  clean_ticker = (
+      ticker_input.split(":")[-1].strip().upper()
+      if ":" in str(ticker_input)
+      else str(ticker_input).strip().upper()
+  )
+  download_dir = f"documents_{clean_ticker}"
+  os.makedirs(download_dir, exist_ok=True)
+  for f in glob.glob(f"{download_dir}/*"):
+    os.remove(f)
+
+  url = f"https://www.screener.in/company/{clean_ticker}/consolidated/"
+
+  try:
+    res = requests.get(url, headers=headers, cookies=cookies, timeout=20)
+    if res.status_code != 200:
+      st.error(
+          f"❌ Could not access Screener.in page for {clean_ticker} (HTTP"
+          f" {res.status_code}). Ensure SCREENER_SESSION_ID is valid."
+      )
+      return None
+
+    soup = BeautifulSoup(res.content, "html.parser")
+    documents_section = soup.find(id="documents")
+    if not documents_section:
+      st.warning(
+          f"⚠️ No documents section found for {clean_ticker} on Screener.in."
+      )
+      return None
+
+    ars, transcripts, ppts = [], [], []
+    for link in documents_section.find_all("a", href=True):
+      href = link["href"]
+      text = link.get_text(strip=True).lower()
+      if "financial year" in text or "annual report" in text:
+        ars.append(("Annual Report", href))
+      elif text == "transcript":
+        transcripts.append(("Transcript", href))
+      elif text == "ppt":
+        ppts.append(("PPT", href))
+
+    state = {"count": 0, "urls": set()}
+
+    def try_download(text, href):
+      if href in state["urls"]:
+        return False
+      full_url = (
+          href
+          if href.startswith("http")
+          else urljoin("https://www.screener.in", href)
+      )
+      try:
+        doc_res = requests.get(
+            full_url, headers=headers, cookies=cookies, timeout=30
+        )
+        if b"%PDF" in doc_res.content[:100]:
+          file_name = f"screener_doc_{state['count'] + 1}.pdf"
+          file_path = os.path.join(download_dir, file_name)
+          with open(file_path, "wb") as f:
+            f.write(doc_res.content)
+          state["count"] += 1
+          state["urls"].add(href)
+          time.sleep(0.5)
+          return True
+      except Exception:
+        pass
+      return False
+
+    for t, h in ars[:1]:
+      try_download("Annual Report", h)
+    for t, h in transcripts[:4]:
+      try_download("Transcript", h)
+    for t, h in ppts[:4]:
+      try_download("PPT", h)
+
+    pdf_files = glob.glob(f"{download_dir}/*.pdf")
+    if not pdf_files:
+      st.error(f"❌ Could not download any valid PDF reports for {clean_ticker}.")
+      return None
+
+    uploaded_files = [client.files.upload(file=fp) for fp in pdf_files]
+    for f in uploaded_files:
+      while True:
+        info = client.files.get(name=f.name)
+        if "ACTIVE" in str(info.state).upper():
+          break
+        time.sleep(2)
+
+    prompt = """
+You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your sole objective is to analyze the provided Annual Report, Investor Presentations, and Earnings Call Transcripts to determine if the company meets Minervini's "Superperformance" criteria.
+
+### DATA & GROUND TRUTH RULES
+1. Rely ONLY on the uploaded documents and consider ONLY consolidated financial figures.
+2. Do not speculate, calculate unstated assumptions, or fill gaps from external knowledge.
+3. If any metric or fact is missing from the document, write explicitly: "Not available in uploaded documents."
+
+### STRICT CATALYST & VERDICT RULES (CRITICAL)
+- **NO CATALYST = NO PASS:** Even if YoY earnings and sales growth are >20%, you CANNOT award a 🟢 PASS if there is no explicit, forward-looking fundamental catalyst identified in the transcripts or presentations. If growth is strong but no catalyst/trigger is found, the maximum grade is 🟡 WATCHLIST.
+- **SECTOR-ADAPTIVE CATALYST SEARCH:** Automatically adjust the catalyst criteria based on the company's business model:
+  - *Manufacturing / Auto / Infra:* CapEx completion, plant commissioning, order book growth, raw material margin relief.
+  - *Financials / Banks / NBFCs:* Credit/loan growth acceleration, Net Interest Margin (NIM) expansion, sharp drops in NPAs, strong AUM growth.
+  - *Tech / IT / SaaS:* Large deal wins (TCV), client additions, utilization/margin recovery, geographic expansion.
+  - *Consumer / FMCG / Retail:* Volume growth acceleration (not just price-led), Same-Store Sales Growth (SSSG), store count expansion.
+  - *Pharma / Healthcare:* US FDA approvals, new launches, hospital bed capacity additions, ARPOB growth.
+  - *Platforms / Exchanges:* Market share expansion, active user growth, transaction volume surges.
+- **FORWARD-LOOKING vs. BACKWARD-LOOKING:** Prioritize forward-looking triggers (management guidance, upcoming launches, margin expansions, pipeline) found in recent Earnings Calls over historical reasons in old reports.
+- **Base Verdict ONLY on Available Data:** Do not penalize missing data points, but strictly enforce the presence of a tangible growth catalyst.
+
+---
+
+### OUTPUT FORMAT & VISUAL HIERARCHY
+
+#### 1. HEADER & INSTANT VERDICT
+Provide the company name and an instant decision verdict:
+- **MINERVINI FUNDAMENTAL VERDICT:** [Insert 🟢 PASS / 🟡 WATCHLIST / 🔴 FAIL]
+- **🚀 PRIMARY CATALYST / BREAKOUT TRIGGER:** [State in 1-2 BOLD sentences the exact forward-looking trigger driving this stock (e.g., "New plant going live in Q3 to double capacity" OR "Credit growth accelerated to 28% with NIM expansion" OR "Large $50M TCV deal win securing H2 revenue"). If NONE found, state: "⚠️ NO CLEAR FORWARD CATALYST DETECTED"].
+- **VERDICT LOGIC:** [Provide a 1-2 sentence justification for the overall verdict].
+  - 🟢 **PASS:** Available YoY Sales & EPS > 20%, positive Code 33 acceleration, AND a clear, validated forward catalyst.
+  - 🟡 **WATCHLIST:** Strong growth but NO clear catalyst, a minor confirmed red flag, OR a Catalyst Override applied.
+  - 🔴 **FAIL:** Confirmed Sales/EPS growth < 20%, decelerating growth, or major red flags without a massive catalyst.
+
+#### 2. SUPERPERFORMANCE SCORECARD
+Present this quick-scan summary table (Use "N/A - Not in Document" if missing):
+
+| Core Pillar | Status | Key Metric / Reason |
+| :--- | :---: | :--- |
+| **1. Growth Velocity (Code 33)** | [🟢 / 🟡 / 🔴 / ⚪ N/A] | [1-line summary of EPS, Sales, and Net Margin acceleration] |
+| **2. Forward Catalyst & Triggers** | [🟢 / 🟡 / 🔴 / ⚪ N/A] | [1-line summary of sector-specific catalyst from Concalls/PPTs] |
+| **3. Earnings Quality & Red Flags**| [🟢 / 🟡 / 🔴 / ⚪ N/A] | [1-line summary of receivables, inventory, or cash flow] |
+
+#### 3. BOTTOM LINE UP FRONT (BLUF)
+- **Top Fundamental Strengths (from available data):**
+  - [Bullet 1]
+  - [Bullet 2]
+  - [Bullet 3]
+- **Top Red Flags / Concerns (from available data):**
+  - [Bullet 1]
+  - [Bullet 2]
+  - [Bullet 3]
+
+---
+
+### DETAILED ANALYSIS BREAKDOWN
+
+Use visual status icons at the start of each bullet:
+- 🟢 Clear Pass
+- 🔴 Fail/Red Flag
+- 🟡 Mixed / Catalyst Override Applied
+- ⚠️ Warning/Watch
+- ⚪ Not available in document
+
+Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
+
+#### SECTION 1: Growth Velocity (The Engine)
+* **Latest Quarter YoY Growth:** Is EPS and Sales growth **>20%**? State exact % values.
+* **Code 33 Acceleration:** Are EPS, Sales, AND Net Margins accelerating compared to prior 2-3 quarters or same quarter last year? (**Yes / No / Data Missing**)
+* **Margin Dynamics:** Are Net and Operating Profit Margins expanding or contracting YoY?
+* **Management Guidance:** Did management raise or confirm strong future outlook/guidance in recent Earnings Calls?
+* **Annual Track Record:** Is there a 3-5 year history of annual EPS growth? Are current FY estimates projected to reach a **new all-time high**?
+
+#### SECTION 2: Sector-Adaptive Catalyst & Forward Triggers (Concall & PPT Extraction)
+* **Primary Sector Catalyst:** Identify the primary growth driver based on the industry (e.g., CapEx/Order Book for Industrial; NIM/Credit growth for Banks; Deal wins/Margins for IT; Volume/SSSG/Stores for Retail; FDA/Launches for Pharma).
+* **Catalyst Magnitude & Timeline:** Is this a game-changing trigger taking effect in the next 1-4 quarters? State exact management commentary or guidance.
+* **Institutional Sponsorship (FII/DII Trend):** Did FII, DII, or Mutual Fund shareholding increase in the most recent quarter compared to the previous quarter? (**Yes / No / Data Missing**)
+* **Competitive Advantage & Scalability:** Is the growth model scalable without excessive capital burn?
+* **Market Leadership:** Is the company a market leader (#1 or #2 in its niche) or gaining market share?
+
+#### SECTION 3: Quality of Earnings & Red Flags
+* ⚠️ **Inventory vs. Sales Growth:** Is inventory (especially finished goods) growing faster than sales? State exact growth rate comparison if present (Mark N/A for Banks/Services).
+* ⚠️ **Receivables vs. Sales Growth:** Are accounts receivable growing faster than sales?
+* **Source of Profit:** Is EPS driven by **Top Line revenue**, or by cost-cutting, tax benefits, or "Other Income"?
+* **Tax Rate Distortion:** Was there an artificial boost to EPS from a lower effective tax rate?
+* **Cash Flow vs. Earnings:** Has Operating Cash Flow (CFO) diverged negatively from Net Profit over the last 3 years?
+* **Debt Load & Solvency:** What is the total debt load (or NPA profile for financials), and can cash flows easily service it?
+"""
+
+    try:
+      response = client.models.generate_content(
+          model="gemini-2.5-flash",
+          contents=[prompt] + uploaded_files,
+          config={"service_tier": "flex"},
+      )
+    except Exception as e:
+      if "tokens allowed" in str(e) or "400" in str(e):
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[prompt] + uploaded_files[:4],
+            config={"service_tier": "flex"},
+        )
+      else:
+        raise e
+
+    analysis_text = response.text
+
+    verdict_line = ""
+    for line in analysis_text.upper().split("\n"):
+      if "MINERVINI FUNDAMENTAL VERDICT:" in line or "VERDICT:" in line:
+        verdict_line = line
+        break
+
+    if "PASS" in verdict_line or "🟢" in verdict_line:
+      verdict = "🟢 PASS"
+    elif "WATCHLIST" in verdict_line or "🟡" in verdict_line:
+      verdict = "🟡 WATCHLIST"
+    elif "FAIL" in verdict_line or "🔴" in verdict_line:
+      verdict = "🔴 FAIL"
+    else:
+      verdict = "🟣 Review Needed"
+
+    today_str = time.strftime("%Y-%m-%d")
+    report_entry = {
+        "ticker": clean_ticker,
+        "verdict": verdict,
+        "date": today_str,
+        "report_md": analysis_text,
+    }
+
+    st.session_state.fundamental_reports[clean_ticker] = report_entry
+    save_fundamental_reports(st.session_state.fundamental_reports)
+
+    # Optional Email Sender
+    if email_addr and email_pass:
+      try:
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
+        html_text = markdown.markdown(analysis_text, extensions=["tables"])
+        msg = MIMEMultipart("alternative")
+        msg["From"] = email_addr
+        msg["To"] = email_addr
+        msg["Subject"] = f"{clean_ticker} - {verdict}"
+        msg.attach(MIMEText(analysis_text, "plain"))
+        msg.attach(MIMEText(html_text, "html"))
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(email_addr, email_pass)
+        server.send_message(msg)
+        server.quit()
+      except Exception:
+        pass
+
+    return report_entry
+
+  except Exception as e:
+    st.error(f"❌ Fundamental Analysis failed for {clean_ticker}: {e}")
+    return None
+
+
+@st.dialog("🧠 Minervini Fundamental AI Analyst", width="large")
+def show_fundamental_modal(ticker_symbol):
+  clean_sym = (
+      ticker_symbol.split(":")[-1].strip().upper()
+      if ":" in str(ticker_symbol)
+      else str(ticker_symbol).strip().upper()
+  )
+  rep = st.session_state.fundamental_reports.get(clean_sym)
+
+  if not rep:
+    st.info(f"No stored report for **{clean_sym}**. Click below to run AI.")
+    if st.button(
+        "⚡ Run Gemini 2.5 Flash Analysis Now",
+        type="primary",
+        use_container_width=True,
+    ):
+      with st.spinner(
+          f"📡 Downloading Screener.in PDFs & analyzing {clean_sym}..."
+      ):
+        new_rep = run_gemini_fundamental_analysis(clean_sym)
+        if new_rep:
+          st.success("✅ Report generated and saved to Gist!")
+          st.rerun()
+  else:
+    st.subheader(f"📊 {clean_sym} — {rep.get('verdict', 'N/A')}")
+    st.caption(
+        f"📅 Generated On: **{rep.get('date', 'N/A')}** | 💡 Zero tokens"
+        " spent on load"
+    )
+    st.markdown("---")
+    st.markdown(rep.get("report_md", ""))
+    st.markdown("---")
+    if st.button(
+        "🔄 Re-Analyze & Overwrite (Quarterly Refresh)",
+        type="secondary",
+        use_container_width=True,
+    ):
+      with st.spinner(
+          f"📡 Fetching latest Screener.in PDFs & replacing {clean_sym}"
+          " report..."
+      ):
+        updated_rep = run_gemini_fundamental_analysis(clean_sym)
+        if updated_rep:
+          st.success("✅ Old report replaced with latest quarterly data!")
+          st.rerun()
+
+
+def get_fundamental_badge(sym_name):
+  clean_sym = (
+      sym_name.split(":")[-1].strip().upper()
+      if ":" in str(sym_name)
+      else str(sym_name).strip().upper()
+  )
+  rep = st.session_state.fundamental_reports.get(clean_sym)
+  if not rep:
+    return "⚪ Not Analyzed"
+  return f"{rep.get('verdict')} ({rep.get('date', '')})"
 
 
 # ==========================================
@@ -826,6 +1223,8 @@ def get_left_aligned_column_config(col_list):
       cfg[col] = st.column_config.Column(col, alignment="left", width=140)
     elif col in ["Date", "Sector"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=130)
+    elif col == "Fundamental":
+      cfg[col] = st.column_config.Column(col, alignment="left", width=155)
     elif "Rank Velocity" in col:
       cfg[col] = st.column_config.NumberColumn(
           col, alignment="left", format="%+d", width=125
@@ -2584,6 +2983,13 @@ with tab_screener:
           axis=1,
       )
 
+      # ----------------------------------------------------
+      # ATTACH PERSISTENT FUNDAMENTAL REPORT BADGE COLUMN
+      # ----------------------------------------------------
+      df_display["Fundamental"] = df_display["name"].apply(
+          get_fundamental_badge
+      )
+
       canonical_perf_order = [
           "Perf % 1W",
           "Perf % 1M",
@@ -2616,6 +3022,7 @@ with tab_screener:
               "S.No.",
               "TV_Symbol",
               "name",
+              "Fundamental",
               "Close",
               "Change %",
               "ADR %",
@@ -2656,6 +3063,33 @@ with tab_screener:
       selected_rows = parse_table_selection_multi(
           table_ev_scan, df_display, "TV_Symbol"
       )
+
+      # ----------------------------------------------------
+      # 🧠 FUNDAMENTAL AI ANALYST STUDIO BAR (SCAN TAB)
+      # ----------------------------------------------------
+      st.markdown("---")
+      st.markdown("#### 🧠 Minervini Fundamental AI Analyst Studio")
+      f_col1, f_col2, f_col3 = st.columns([1.8, 1.8, 1.4])
+      with f_col1:
+        selected_fund_ticker_scan = st.selectbox(
+            "Select Ticker to View or Generate AI Report:",
+            options=df_display["TV_Symbol"].tolist(),
+            key=f"fund_scan_select_{rc}_{sc}",
+        )
+      with f_col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button(
+            "📖 Open Saved Report / Run AI Analyst",
+            type="primary",
+            use_container_width=True,
+            key=f"fund_btn_scan_{rc}_{sc}",
+        ):
+          show_fundamental_modal(selected_fund_ticker_scan)
+      with f_col3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.caption(
+            "💡 Zero tokens used on saved reports. Overwrite option available inside dialog."
+        )
 
       st.markdown("---")
       cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
@@ -3064,10 +3498,18 @@ with tab_watchlists:
         axis=1,
     )
 
+    # ----------------------------------------------------
+    # ATTACH PERSISTENT FUNDAMENTAL REPORT BADGE COLUMN
+    # ----------------------------------------------------
+    merged_df["Fundamental"] = merged_df["name"].apply(
+        get_fundamental_badge
+    )
+
     wl_cols = [
         "S.No.",
         "TV_Symbol",
         "name",
+        "Fundamental",
         "Close",
         "Change %",
         "ADR %",
@@ -3109,6 +3551,33 @@ with tab_watchlists:
     sel_symbols = parse_table_selection_multi(
         wl_table_event, merged_df, "TV_Symbol"
     )
+
+    # ----------------------------------------------------
+    # 🧠 FUNDAMENTAL AI ANALYST STUDIO BAR (WATCHLIST TAB)
+    # ----------------------------------------------------
+    st.markdown("---")
+    st.markdown("#### 🧠 Minervini Fundamental AI Analyst Studio")
+    wf_col1, wf_col2, wf_col3 = st.columns([1.8, 1.8, 1.4])
+    with wf_col1:
+      selected_fund_ticker_wl = st.selectbox(
+          "Select Ticker to View or Generate AI Report:",
+          options=merged_df["TV_Symbol"].tolist(),
+          key=f"fund_wl_select_{wsc}",
+      )
+    with wf_col2:
+      st.markdown("<br>", unsafe_allow_html=True)
+      if st.button(
+          "📖 Open Saved Report / Run AI Analyst",
+          type="primary",
+          use_container_width=True,
+          key=f"fund_btn_wl_{wsc}",
+      ):
+        show_fundamental_modal(selected_fund_ticker_wl)
+    with wf_col3:
+      st.markdown("<br>", unsafe_allow_html=True)
+      st.caption(
+          "💡 Zero tokens used on saved reports. Overwrite option available inside dialog."
+      )
 
     c_rem, c_clr, c_promo_sel, c_promo_btn = st.columns([1.5, 1.2, 2.0, 1.5])
     with c_rem:
