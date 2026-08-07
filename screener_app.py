@@ -735,7 +735,7 @@ def get_fundamental_badge(sym_name):
 
 
 # ==========================================
-# 0B. AUTHENTICATED EXCEL LOADER & GLOBAL CIRCUIT BANDS
+# 0B. AUTHENTICATED EXCEL LOADER (3-TIER AUTH & RETRY)
 # ==========================================
 def fetch_excel_file(filename):
   if os.path.exists(filename):
@@ -818,9 +818,6 @@ def get_nse_circuit_bands():
       pass
 
   return symbol_to_band
-
-
-GLOBAL_NSE_BANDS = get_nse_circuit_bands() or {}
 
 
 @st.cache_data(
@@ -1120,6 +1117,79 @@ def style_rotation_tracker(df):
   except Exception:
     pass
   return styler
+
+
+# ==========================================
+# VISUAL WATCHLIST COLOR DOT HELPER
+# ==========================================
+def get_wl_dots(symbol, watchlists_dict):
+  bare_sym = (
+      symbol.split(":")[-1].strip().upper()
+      if ":" in str(symbol)
+      else str(symbol).strip().upper()
+  )
+  dots = []
+  for wl_name, sym_list in watchlists_dict.items():
+    wl_bare_symbols = [s.split(":")[-1].strip().upper() for s in sym_list]
+    if bare_sym in wl_bare_symbols:
+      name_lower = wl_name.lower()
+      if "post breakout" in name_lower or "breakout" in name_lower:
+        dot = "🔵"
+      elif "weekly" in name_lower:
+        dot = "🟡"
+      elif "focus" in name_lower:
+        dot = "🟢"
+      elif "scan bulk" in name_lower or "bulk" in name_lower:
+        dot = "🟠"
+      elif "sold" in name_lower:
+        dot = "🔴"
+      else:
+        dot = "🟣"
+      if dot not in dots:
+        dots.append(dot)
+  return "".join(dots)
+
+
+# ==========================================
+# VISUAL CIRCUIT STOCK BADGE HELPER
+# ==========================================
+def is_circuit_stock_badge(row, bands_map):
+  sym = str(row.get("name", "")).replace("🚨", "").strip().upper()
+  band_val = bands_map.get(sym, "")
+  if band_val in ["2", "5", "10"]:
+    return True
+
+  high = pd.to_numeric(row.get("high"), errors="coerce")
+  low = pd.to_numeric(row.get("low"), errors="coerce")
+  open_p = pd.to_numeric(row.get("open"), errors="coerce")
+  close_p = pd.to_numeric(row.get("close"), errors="coerce")
+  change_p = abs(pd.to_numeric(row.get("change"), errors="coerce"))
+
+  if (
+      pd.notna(high)
+      and pd.notna(low)
+      and high == low
+      and high > 0
+      and pd.notna(change_p)
+      and change_p > 1.5
+  ):
+    return True
+
+  is_locked = (
+      pd.notna(close_p)
+      and pd.notna(high)
+      and pd.notna(low)
+      and (close_p == high or close_p == low)
+      and (high != open_p)
+  )
+  if is_locked and (
+      (1.97 <= change_p <= 2.00)
+      or (4.97 <= change_p <= 5.00)
+      or (9.97 <= change_p <= 10.00)
+  ):
+    return True
+
+  return False
 
 
 # ==========================================
@@ -2485,7 +2555,7 @@ with tab_screener:
         ma_cols_to_fetch,
         max_results,
     )
-    nse_bands_map = GLOBAL_NSE_BANDS
+    nse_bands_map = get_nse_circuit_bands()
 
   if results_df.empty:
     st.warning(
@@ -2880,9 +2950,6 @@ with tab_screener:
           + "/consolidated/"
       )
 
-      # ----------------------------------------------------
-      # VECTORIZED ZERO-LAG WATCHLIST DOT MAPPER (< 0.01s)
-      # ----------------------------------------------------
       wl_dot_map = {}
       for wl_name, sym_list in st.session_state.watchlists.items():
         dot = (
@@ -2918,9 +2985,6 @@ with tab_screener:
           axis=1,
       )
 
-      # ----------------------------------------------------
-      # VECTORIZED ZERO-LAG CIRCUIT BADGE MAPPER (< 0.01s)
-      # ----------------------------------------------------
       df_display["_in_band"] = (
           df_display["name"].str.upper().map(nse_bands_map)
       )
@@ -2935,9 +2999,6 @@ with tab_screener:
           ~df_display["_is_circuit_badge"], df_display["name"] + " 🚨"
       )
 
-      # ----------------------------------------------------
-      # VECTORIZED ZERO-LAG FUNDAMENTAL BADGE MAPPER (< 0.01s)
-      # ----------------------------------------------------
       fund_badge_map = {
           k: f"{v.get('verdict')} ({v.get('date', '')})"
           for k, v in st.session_state.fundamental_reports.items()
@@ -3524,7 +3585,7 @@ with tab_watchlists:
         axis=1,
     )
 
-    nse_bands_map = GLOBAL_NSE_BANDS
+    nse_bands_map = get_nse_circuit_bands()
     merged_df["_is_circuit_badge"] = merged_df.apply(
         lambda r: is_circuit_stock_badge(r, nse_bands_map), axis=1
     )
