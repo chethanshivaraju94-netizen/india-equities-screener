@@ -167,6 +167,8 @@ def load_filter_presets():
           "en_sales_q": True,
           "min_sales_q": 10.0,
           "allow_na_growth": True,
+          "en_rs_rating": True,
+          "min_rs_rating": 80,
           "en_adr": True,
           "min_adr": 2.5,
           "en_above_52l": True,
@@ -210,6 +212,8 @@ def load_filter_presets():
           "en_sales_q": False,
           "min_sales_q": 0.0,
           "allow_na_growth": True,
+          "en_rs_rating": True,
+          "min_rs_rating": 85,
           "en_adr": True,
           "min_adr": 4.0,
           "en_above_52l": True,
@@ -248,6 +252,8 @@ def load_filter_presets():
           "en_sales_q": True,
           "min_sales_q": 10.0,
           "allow_na_growth": False,
+          "en_rs_rating": True,
+          "min_rs_rating": 75,
           "en_adr": True,
           "min_adr": 1.5,
           "en_above_52l": True,
@@ -462,6 +468,8 @@ if "market_briefings" not in st.session_state:
   st.session_state.market_briefings = load_market_briefings()
 if "active_scan_summary" not in st.session_state:
   st.session_state.active_scan_summary = {}
+if "rs_rating_map" not in st.session_state:
+  st.session_state.rs_rating_map = {}
 if "reset_counter" not in st.session_state:
   st.session_state.reset_counter = 0
 if "scan_sel_counter" not in st.session_state:
@@ -936,7 +944,7 @@ Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
 @st.dialog("🧠 Minervini Fundamental AI Analyst", width="large")
 def show_fundamental_modal(ticker_symbol):
   clean_sym = (
-      ticker_symbol.split(" me:")[-1].strip().upper()
+      ticker_symbol.split(":")[-1].strip().upper()
       if ":" in str(ticker_symbol)
       else str(ticker_symbol).strip().upper()
   )
@@ -1002,19 +1010,16 @@ def run_gemini_market_awareness(
 
   client = genai.Client(api_key=gemini_key)
 
-  # 1. Format Market Monitor Recent Data
   mm_text = "No Market Monitor Data"
   if not df_mm.empty:
     mm_slice = df_mm.head(10).to_string(index=False)
     mm_text = f"NSE Market Monitor (Last 10 Trading Days):\n{mm_slice}"
 
-  # 2. Format Sector Heatmap
   heat_text = "No Sector Heatmap Data"
   if not df_heat.empty:
     heat_slice = df_heat.to_string(index=False)
     heat_text = f"27-Sector CAN SLIM RS Heatmap & Rank Velocities:\n{heat_slice}"
 
-  # 3. Format Historical Rotation Tracker
   rot_text = "No Rotation Tracker Data"
   if not df_rot.empty:
     rot_slice = df_rot.head(10).to_string(index=False)
@@ -1023,7 +1028,6 @@ def run_gemini_market_awareness(
         f" {rot_slice}"
     )
 
-  # 4. Format Active Screener Scan Breakdown
   scan_text = "No Active Screener Scan Summary Available"
   if scan_summary_dict:
     sec_str = json.dumps(
@@ -1325,9 +1329,9 @@ def color_scale_2pt(
     r, g, b = c_max
   else:
     ratio = (v - v_min) / max((v_max - v_min), 1e-6)
-    r = int(c_min[0] + (c_max[0] - c_min[0]) * ratio)
-    g = int(c_min[1] + (c_max[1] - c_min[1]) * ratio)
-    b = int(c_min[2] + (c_max[2] - c_min[2]) * ratio)
+    r = int(c_min[0] + (c_mid[0] - c_min[0]) * ratio)
+    g = int(c_min[1] + (c_mid[1] - c_min[1]) * ratio)
+    b = int(c_mid[2] + (c_max[2] - c_mid[2]) * ratio)
   return f"background-color: #{r:02X}{g:02X}{b:02X}; color: #000000;"
 
 
@@ -1614,6 +1618,10 @@ def get_left_aligned_column_config(col_list):
       cfg[col] = st.column_config.Column(col, alignment="left", width=135)
     elif col == "name":
       cfg[col] = st.column_config.Column(col, alignment="left", width=140)
+    elif col == "RS Rating":
+      cfg[col] = st.column_config.NumberColumn(
+          "RS Rating", alignment="left", format="%d", width=95
+      )
     elif col in ["Date", "Sector"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=130)
     elif col == "Fundamental":
@@ -2388,6 +2396,8 @@ with col_load:
       st.session_state["f_en_sales_q"] = p.get("en_sales_q", False)
       st.session_state["f_min_sales_q"] = p.get("min_sales_q", 10.0)
       st.session_state["f_allow_na_growth"] = p.get("allow_na_growth", True)
+      st.session_state["f_en_rs_rating"] = p.get("en_rs_rating", True)
+      st.session_state["f_min_rs_rating"] = p.get("min_rs_rating", 80)
       st.session_state["f_en_adr"] = p.get("en_adr", True)
       st.session_state["f_min_adr"] = p.get("min_adr", 2.25)
       st.session_state["f_en_52l"] = p.get("en_above_52l", True)
@@ -2440,6 +2450,8 @@ with col_update:
           "en_sales_q": st.session_state.get("f_en_sales_q", False),
           "min_sales_q": st.session_state.get("f_min_sales_q", 10.0),
           "allow_na_growth": st.session_state.get("f_allow_na_growth", True),
+          "en_rs_rating": st.session_state.get("f_en_rs_rating", True),
+          "min_rs_rating": st.session_state.get("f_min_rs_rating", 80),
           "en_adr": st.session_state.get("f_en_adr", True),
           "min_adr": st.session_state.get("f_min_adr", 2.25),
           "en_above_52l": st.session_state.get("f_en_52l", True),
@@ -2515,6 +2527,8 @@ with st.sidebar.expander("➕ Save Current Filters as New Preset"):
             "en_sales_q": st.session_state.get("f_en_sales_q", False),
             "min_sales_q": st.session_state.get("f_min_sales_q", 10.0),
             "allow_na_growth": st.session_state.get("f_allow_na_growth", True),
+            "en_rs_rating": st.session_state.get("f_en_rs_rating", True),
+            "min_rs_rating": st.session_state.get("f_min_rs_rating", 80),
             "en_adr": st.session_state.get("f_en_adr", True),
             "min_adr": st.session_state.get("f_min_adr", 2.25),
             "en_above_52l": st.session_state.get("f_en_52l", True),
@@ -2877,7 +2891,23 @@ with c_sb:
   )
 
 st.sidebar.markdown("---")
-st.sidebar.header("5. Performance % (Relative Strength)")
+st.sidebar.header("5. Performance % & IBD RS Rating")
+
+en_rs_rating = st.sidebar.checkbox(
+    "Filter by Min IBD RS Rating (1-99)",
+    value=st.session_state.get("f_en_rs_rating", True),
+    key="f_en_rs_rating",
+)
+min_rs_rating = st.sidebar.slider(
+    "Min IBD RS Rating (1-99 Market Percentile):",
+    min_value=1,
+    max_value=99,
+    value=st.session_state.get("f_min_rs_rating", 80),
+    step=1,
+    key="f_min_rs_rating",
+    disabled=not en_rs_rating,
+)
+
 perf_options = {
     "1 Week": ("Perf.W", "Perf % 1W"),
     "1 Month": ("Perf.1M", "Perf % 1M"),
@@ -2959,6 +2989,27 @@ with tab_screener:
     )
     nse_bands_map = get_nse_circuit_bands()
 
+    # ==========================================
+    # AUTHENTIC IBD-STYLE RS RATING CALCULATION (1-99)
+    # Calculated across the FULL UN-FILTERED 4,000 Stock Universe FIRST
+    # Formula: 2 * Perf.3M + Perf.6M + Perf.Y
+    # ==========================================
+    if not results_df.empty:
+      p_3m = pd.to_numeric(results_df.get("Perf.3M"), errors="coerce").fillna(0)
+      p_6m = pd.to_numeric(results_df.get("Perf.6M"), errors="coerce").fillna(0)
+      p_1y = pd.to_numeric(results_df.get("Perf.Y"), errors="coerce").fillna(0)
+
+      results_df["_ibd_raw_score"] = (2 * p_3m) + p_6m + p_1y
+      rs_pct = results_df["_ibd_raw_score"].rank(pct=True, na_option="keep")
+      results_df["RS Rating"] = (
+          (rs_pct * 98 + 1).round().fillna(1).astype(int)
+      )
+
+      # Store in Session State for Watchlist Studio enrichment
+      st.session_state.rs_rating_map = dict(
+          zip(results_df["name"].str.upper(), results_df["RS Rating"])
+      )
+
   if results_df.empty:
     st.warning(
         "No stocks matched your criteria. Adjust your sidebar filters or switch"
@@ -3026,6 +3077,12 @@ with tab_screener:
         ]
       else:
         df = df[df["Sales Q YoY %"] >= min_sales_q]
+
+    # ----------------------------------------------------
+    # IBD RS RATING FILTERING
+    # ----------------------------------------------------
+    if en_rs_rating and "RS Rating" in df.columns:
+      df = df[df["RS Rating"] >= min_rs_rating]
 
     # ----------------------------------------------------
     # ROBUST MULTI-ALIAS IPO DATE PARSING
@@ -3155,7 +3212,7 @@ with tab_screener:
     if df.empty:
       st.warning(
           "No stocks passed all criteria. Try broadening your NSE"
-          " Sector/Industry selections."
+          " Sector/Industry selections or RS Rating slider."
       )
     else:
       total_passed = len(df)
@@ -3450,6 +3507,7 @@ with tab_screener:
               "S.No.",
               "TV_Symbol",
               "name",
+              "RS Rating",
               "Fundamental",
               "Close",
               "Change %",
@@ -3472,9 +3530,8 @@ with tab_screener:
 
       st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
       st.caption(
-          "💡 **Watchlist Color Legend:** 🔵 Post Breakout Monitor | 🟢 Focus"
-          " List | 🟡 Weekly Focus | 🟠 Scan Bulk | 🔴 Sold Stocks | 🟣 Custom"
-          " | 🚨 **Circuit Band / Freeze**"
+          "💡 **RS Rating:** IBD-Style 1-99 Percentile Score calculated across"
+          " 4,000+ listed Indian equities before filters."
       )
 
       sc = st.session_state.scan_sel_counter
@@ -4002,9 +4059,17 @@ with tab_watchlists:
         ~merged_df["_is_circuit_badge"], merged_df["name"] + " 🚨"
     )
 
-    # ----------------------------------------------------
+    # MAP AUTHENTIC IBD RS RATING FROM SESSION STATE LOOKUP
+    rs_map = st.session_state.get("rs_rating_map", {})
+    merged_df["RS Rating"] = (
+        merged_df["name"]
+        .str.replace(" 🚨", "")
+        .str.upper()
+        .map(rs_map)
+        .fillna("N/A")
+    )
+
     # ATTACH PERSISTENT FUNDAMENTAL REPORT BADGE COLUMN
-    # ----------------------------------------------------
     merged_df["Fundamental"] = (
         merged_df["name"]
         .str.replace(" 🚨", "")
@@ -4022,6 +4087,7 @@ with tab_watchlists:
         "S.No.",
         "TV_Symbol",
         "name",
+        "RS Rating",
         "Fundamental",
         "Close",
         "Change %",
@@ -4251,7 +4317,6 @@ with tab_market_health:
       "📊 Historical Rotation Tracker",
   ])
 
-  # Load all base datasets first
   df_mm = load_market_monitor_data()
   df_heat, df_rot = load_sector_monitor_data()
 
