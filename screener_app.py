@@ -73,6 +73,7 @@ st.markdown(TABLE_CUSTOM_CSS, unsafe_allow_html=True)
 WATCHLIST_FILE = "local_watchlists.json"
 PRESETS_FILE = "local_filter_presets.json"
 REPORTS_FILE = "local_fundamental_reports.json"
+BRIEFINGS_FILE = "local_market_briefings.json"
 
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
 GIST_ID = st.secrets.get("GIST_ID", None)
@@ -337,7 +338,7 @@ def save_filter_presets(presets_dict):
 
 
 # ==========================================
-# GIST PERSISTENCE FOR FUNDAMENTAL REPORTS
+# GIST PERSISTENCE FOR FUNDAMENTAL REPORTS & MARKET BRIEFINGS
 # ==========================================
 def load_fundamental_reports():
   if GITHUB_TOKEN and GIST_ID:
@@ -393,6 +394,60 @@ def save_fundamental_reports(reports_dict):
       pass
 
 
+def load_market_briefings():
+  if GITHUB_TOKEN and GIST_ID:
+    try:
+      headers = {
+          "Authorization": f"token {GITHUB_TOKEN}",
+          "Accept": "application/vnd.github.v3+json",
+      }
+      res = requests.get(
+          f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5
+      )
+      if res.status_code == 200:
+        gist_data = res.json()
+        if BRIEFINGS_FILE in gist_data["files"]:
+          content = gist_data["files"][BRIEFINGS_FILE]["content"]
+          return json.loads(content)
+    except Exception:
+      pass
+
+  if os.path.exists(BRIEFINGS_FILE):
+    try:
+      with open(BRIEFINGS_FILE, "r") as f:
+        return json.load(f)
+    except Exception:
+      pass
+
+  return {}
+
+
+def save_market_briefings(briefings_dict):
+  try:
+    with open(BRIEFINGS_FILE, "w") as f:
+      json.dump(briefings_dict, f, indent=2)
+  except Exception:
+    pass
+
+  if GITHUB_TOKEN and GIST_ID:
+    try:
+      headers = {
+          "Authorization": f"token {GITHUB_TOKEN}",
+          "Accept": "application/vnd.github.v3+json",
+      }
+      payload = {
+          "files": {BRIEFINGS_FILE: {"content": json.dumps(briefings_dict, indent=2)}}
+      }
+      requests.patch(
+          f"https://api.github.com/gists/{GIST_ID}",
+          headers=headers,
+          json=payload,
+          timeout=5,
+      )
+    except Exception:
+      pass
+
+
 if "watchlists" not in st.session_state:
   st.session_state.watchlists = load_watchlists()
 if "active_watchlist_name" not in st.session_state:
@@ -403,6 +458,10 @@ if "filter_presets" not in st.session_state:
   st.session_state.filter_presets = load_filter_presets()
 if "fundamental_reports" not in st.session_state:
   st.session_state.fundamental_reports = load_fundamental_reports()
+if "market_briefings" not in st.session_state:
+  st.session_state.market_briefings = load_market_briefings()
+if "active_scan_summary" not in st.session_state:
+  st.session_state.active_scan_summary = {}
 if "reset_counter" not in st.session_state:
   st.session_state.reset_counter = 0
 if "scan_sel_counter" not in st.session_state:
@@ -438,6 +497,7 @@ def create_pdf_bytes(ticker, report_md):
         "📋": "",
         "🧠": "",
         "⭐": "",
+        "🎯": "[TARGET] ",
         "🚨": "[CIRCUIT] ",
         "₹": "Rs. ",
         "—": "-",
@@ -525,7 +585,7 @@ def create_pdf_bytes(ticker, report_md):
 
 
 # ==========================================
-# GEMINI FUNDAMENTAL AI ANALYST ENGINE (MATCHING COLAB SCRIPT EXACTLY)
+# GEMINI FUNDAMENTAL AI ANALYST ENGINE
 # ==========================================
 def run_gemini_fundamental_analysis(
     ticker_input, reports_store=None, status_log=None
@@ -639,7 +699,6 @@ def run_gemini_fundamental_analysis(
 
       return False
 
-    # --- STRICT QUOTAS (MATCHING COLAB SCRIPT) ---
     ar_count, tr_count, ppt_count = 0, 0, 0
 
     for t, h in ars:
@@ -777,7 +836,6 @@ Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
 * **Debt Load & Solvency:** What is the total debt load (or NPA profile for financials), and can cash flows easily service it?
 """
 
-    # --- GRACEFUL DOWNGRADE LOGIC (MATCHING COLAB SCRIPT) ---
     try:
       response = client.models.generate_content(
           model="gemini-2.5-flash",
@@ -802,7 +860,6 @@ Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
 
     analysis_text = response.text
 
-    # --- EXTRACT VERDICT ---
     verdict_line = ""
     for line in analysis_text.upper().split("\n"):
       if "MINERVINI FUNDAMENTAL VERDICT:" in line or "VERDICT:" in line:
@@ -839,7 +896,6 @@ Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
           f" **{verdict}** (Saved to Gist)"
       )
 
-    # --- SEND INDIVIDUAL HTML EMAIL (MATCHING COLAB SCRIPT) ---
     if email_addr and email_pass:
       try:
         from email.mime.multipart import MIMEMultipart
@@ -880,7 +936,7 @@ Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
 @st.dialog("🧠 Minervini Fundamental AI Analyst", width="large")
 def show_fundamental_modal(ticker_symbol):
   clean_sym = (
-      ticker_symbol.split(":")[-1].strip().upper()
+      ticker_symbol.split(" me:")[-1].strip().upper()
       if ":" in str(ticker_symbol)
       else str(ticker_symbol).strip().upper()
   )
@@ -932,20 +988,156 @@ def show_fundamental_modal(ticker_symbol):
             st.rerun()
 
 
-def get_fundamental_badge(sym_name):
-  clean_sym = (
-      sym_name.split(":")[-1].strip().upper()
-      if ":" in str(sym_name)
-      else str(sym_name).strip().upper()
-  )
-  rep = st.session_state.fundamental_reports.get(clean_sym)
-  if not rep:
-    return "⚪ Not Analyzed"
-  return f"{rep.get('verdict')} ({rep.get('date', '')})"
+# ==========================================
+# GEMINI AI SITUATIONAL AWARENESS ENGINE
+# ==========================================
+def run_gemini_market_awareness(
+    df_mm, df_heat, df_rot, scan_summary_dict=None, status_log=None
+):
+  gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+  if not gemini_key:
+    if status_log:
+      status_log.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets!")
+    return None
+
+  client = genai.Client(api_key=gemini_key)
+
+  # 1. Format Market Monitor Recent Data
+  mm_text = "No Market Monitor Data"
+  if not df_mm.empty:
+    mm_slice = df_mm.head(10).to_string(index=False)
+    mm_text = f"NSE Market Monitor (Last 10 Trading Days):\n{mm_slice}"
+
+  # 2. Format Sector Heatmap
+  heat_text = "No Sector Heatmap Data"
+  if not df_heat.empty:
+    heat_slice = df_heat.to_string(index=False)
+    heat_text = f"27-Sector CAN SLIM RS Heatmap & Rank Velocities:\n{heat_slice}"
+
+  # 3. Format Historical Rotation Tracker
+  rot_text = "No Rotation Tracker Data"
+  if not df_rot.empty:
+    rot_slice = df_rot.head(10).to_string(index=False)
+    rot_text = (
+        "65-Day Historical Sector RS Ranks (Last 10 Days Trend):\n"
+        f" {rot_slice}"
+    )
+
+  # 4. Format Active Screener Scan Breakdown
+  scan_text = "No Active Screener Scan Summary Available"
+  if scan_summary_dict:
+    sec_str = json.dumps(
+        scan_summary_dict.get("sectors", {}), indent=2
+    )
+    ind_str = json.dumps(
+        scan_summary_dict.get("industries", {}), indent=2
+    )
+    scan_text = (
+        f"Active Screener Scan Leadership Breakdown:\n- Top Sectors passing"
+        f" filters:\n{sec_str}\n- Top Basic Industries passing"
+        f" filters:\n{ind_str}"
+    )
+
+  prompt = f"""
+You are a Senior Institutional Market Strategist and Mark Minervini / Stan Weinstein Market Regime Specialist for Indian Equities (NSE/BSE).
+
+Your sole objective is to analyze the provided multi-day market breadth tables, sector relative strength heatmaps, 65-day rotation rank trends, and active CAN SLIM screener setup concentrations to produce an uncompromising, actionable **Daily Market & Sector Situational Awareness Briefing**.
+
+---
+
+### QUANTITATIVE DATA INPUTS:
+
+{mm_text}
+
+---
+
+{heat_text}
+
+---
+
+{rot_text}
+
+---
+
+{scan_text}
+
+---
+
+### MANDATORY REPORT TEMPLATE & STRUCTURAL REQUIREMENTS:
+
+Generate the report following this exact markdown template structure without skipping any section:
+
+# 🏥 DAILY MARKET & SECTOR SITUATIONAL AWARENESS BRIEFING
+
+#### 1. EXECUTIVE SUMMARY & MARKET REGIME
+- **CURRENT MARKET REGIME:** [Select ONE: 🟢 CONFIRMED UPTREND / 🟡 POWERED UPTREND (CAUTION) / 🟠 RANGEBOUND / CHOPPY / 🔴 MARKET UNDER PRESSURE / BEARISH REVERSAL]
+- **SETUP SUITABILITY MATRIX:**
+  - 🚀 **Momentum Breakout Setups:** [HIGHLY CONDUCTIVE / SELECTIVE (HIGH QUALITY ONLY) / AVOID]
+  - 📉 **Pullback / Re-test Setups:** [HIGHLY CONDUCTIVE / SELECTIVE / AVOID]
+  - 🔄 **Consolidation / Base Setups:** [HIGHLY CONDUCTIVE / SELECTIVE / AVOID]
+- **OVERALL MARKET STATE SUMMARY:** [3-4 sentences synthesizing price action, breadth thrusts, A/D ratio, and % of stocks above key moving averages over the past 5-10 days].
+
+---
+
+#### 2. MARKET BREADTH & HEALTH SYNTHESIS
+- **Trend & Moving Average Participation:** Analyze the trend in stocks >20 EMA, >50 SMA, and >200 SMA.
+- **Thrust & Volume Expansion:** Interpret the 5-Day & 10-Day Thrust Ratios, A/D Ratio, and Volume Breadth.
+- **Expansion vs. Contraction:** Evaluate 52W Highs vs. 52W Lows and 4% Up vs. Down movers over the past week.
+
+---
+
+#### 3. SECTOR MOMENTUM & ROTATION RADAR
+- 🟢 **LEADERSHIP SECTORS (Top Focus for Long Setups):** Detail the top 3-5 sectors ranking #1-5 with positive rank velocity and RS > benchmark.
+- 🚀 **EMERGING / ACCELERATING SECTORS:** Detail sectors jumping ranks rapidly in 5D/10D/21D rank velocity.
+- ⚠️ **FADING / WEAKENING SECTORS:** Detail sectors dropping in relative strength or breaking below 50 SMA.
+- 🔴 **AVOID / BEARISH SECTORS:** Bottom ranked sectors or sectors showing sharp negative rank velocity.
+
+---
+
+#### 4. ACTIVE SCREENER SCAN CLUSTER ANALYSIS
+- **Sector Concentration:** Analyze where the highest percentage of passing stocks originate based on the scan summary data.
+- **Industry Sub-Clusters:** Identify specific basic industries showing stock setup clusters (e.g., Industrial Manufacturing, Capital Goods, Pharma).
+
+---
+
+#### 5. ACTIONABLE NEXT-DAY EXECUTION PLAN
+- 🛡️ **Allowed Risk Per Trade:** [State exact equity risk rule, e.g., 0.5% - 0.75% per trade].
+- 💰 **Maximum Portfolio Deployment / Cash Buffer:** [State cash allocation rule, e.g., 80%-100% deployed vs 30% cash buffer].
+- 🎯 **Primary Focus Sectors & Industries for Tomorrow:** [List exact 2-3 sectors and basic industries to screen for buys].
+- 🚨 **Key Invalidation Levels & Danger Triggers:** [State exact breadth or Nifty 500 thresholds that would signal stopping new buys].
+"""
+
+  try:
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt],
+        config={"service_tier": "flex", "http_options": {"timeout": 900000}},
+    )
+    briefing_text = response.text
+    today_str = time.strftime("%Y-%m-%d")
+
+    entry = {
+        "date": today_str,
+        "briefing_md": briefing_text,
+    }
+
+    st.session_state.market_briefings[today_str] = entry
+    save_market_briefings(st.session_state.market_briefings)
+
+    if status_log:
+      status_log.write(
+          f"✅ **Market Briefing Generated for {today_str}** (Saved to Gist)"
+      )
+
+    return entry
+  except Exception as e:
+    if status_log:
+      status_log.error(f"❌ Failed to generate Market Briefing -> {e}")
+    return None
 
 
 # ==========================================
-# 0B. AUTHENTICATED EXCEL LOADER (3-TIER AUTH & RETRY)
+# 0B. AUTHENTICATED EXCEL LOADER
 # ==========================================
 def fetch_excel_file(filename):
   if os.path.exists(filename):
@@ -2919,7 +3111,7 @@ with tab_screener:
         df = df[df[pf["col_name"]] >= pf["min_val"]]
 
     # ----------------------------------------------------
-    # HYBRID CIRCUIT LIMIT EXCLUSION (MULTI-SELECT SUPPORT)
+    # HYBRID CIRCUIT LIMIT EXCLUSION
     # ----------------------------------------------------
     if en_circuit and circuit_choice:
       df["high"] = pd.to_numeric(df["high"], errors="coerce")
@@ -3111,6 +3303,13 @@ with tab_screener:
         active_industries = (
             sel_ind_table if sel_ind_table else sel_ind_chart
         )
+
+      # SAVE ACTIVE SCAN SUMMARY FOR AI SITUATIONAL AWARENESS ENGINE
+      st.session_state.active_scan_summary = {
+          "total_passed": total_passed,
+          "sectors": sec_counts.head(10).to_dict(orient="records"),
+          "industries": ind_counts.head(10).to_dict(orient="records"),
+      }
 
       st.markdown("---")
       df_display = df.copy()
@@ -4041,22 +4240,91 @@ with tab_watchlists:
 with tab_market_health:
   st.subheader("🏥 Market Health & Sector Rotation Studio")
   st.markdown(
-      "Automated **Nifty 500 Breadth Monitor** and **27-Sector CAN SLIM"
-      " Rotation Engine**. Automatically synchronized with your daily"
-      " scheduled cronjob."
+      "Automated **Nifty 500 Breadth Monitor**, **27-Sector CAN SLIM Rotation"
+      " Engine**, and **AI Situational Awareness Intelligence**."
   )
 
-  tab_mm, tab_sector_heat, tab_sector_rot = st.tabs([
+  tab_ai_intel, tab_mm, tab_sector_heat, tab_sector_rot = st.tabs([
+      "🎯 Daily AI Situational Awareness & Action Plan",
       "📈 NSE Market Breadth Monitor",
       "🔥 Sector RS Heatmap",
       "📊 Historical Rotation Tracker",
   ])
 
+  # Load all base datasets first
+  df_mm = load_market_monitor_data()
+  df_heat, df_rot = load_sector_monitor_data()
+
   # ------------------------------------------
-  # TAB 3A: NSE MARKET MONITOR
+  # SUB-TAB 3A: DAILY AI SITUATIONAL AWARENESS BRIEFING
+  # ------------------------------------------
+  with tab_ai_intel:
+    st.subheader("🧠 Daily Market & Sector Situational Awareness")
+    st.caption(
+        "Synthesizes Nifty 500 Breadth Thrusts, 27-Sector RS Velocity, and"
+        " Active Screener Scan Clusters to produce an actionable institutional"
+        " trading plan."
+    )
+
+    today_str = time.strftime("%Y-%m-%d")
+    latest_briefing = st.session_state.market_briefings.get(today_str)
+
+    b_col1, b_col2 = st.columns([1.8, 1.2])
+
+    with b_col1:
+      if latest_briefing:
+        st.success(f"✅ Active Briefing Loaded for Date: **{today_str}**")
+      else:
+        st.info(
+            f"No AI Briefing generated for **{today_str}** yet. Click the button"
+            " on the right to synthesize today's data!"
+        )
+
+    with b_col2:
+      run_briefing_btn = st.button(
+          "🔄 Generate / Refresh Today's AI Briefing Now",
+          type="primary",
+          use_container_width=True,
+      )
+
+    if run_briefing_btn:
+      with st.status(
+          "🤖 Synthesizing Market Breadth, Sector RS Velocities & Scan"
+          " Clusters...",
+          expanded=True,
+      ) as status_box:
+        scan_summary = st.session_state.get("active_scan_summary", {})
+        latest_briefing = run_gemini_market_awareness(
+            df_mm, df_heat, df_rot, scan_summary, status_log=status_box
+        )
+        if latest_briefing:
+          status_box.update(
+              label="✅ Briefing Complete! Refreshing View...",
+              state="complete",
+          )
+          time.sleep(1)
+          st.rerun()
+
+    if latest_briefing:
+      st.markdown("---")
+      st.markdown(latest_briefing.get("briefing_md", ""))
+      st.markdown("---")
+
+      pdf_bytes_briefing = create_pdf_bytes(
+          f"Market_Awareness_{today_str}", latest_briefing.get("briefing_md", "")
+      )
+      st.download_button(
+          label="📥 Download Daily Market Awareness Briefing (PDF)",
+          data=pdf_bytes_briefing,
+          file_name=f"NSE_Market_Situational_Awareness_{today_str}.pdf",
+          mime="application/pdf",
+          use_container_width=True,
+      )
+
+  # ------------------------------------------
+  # SUB-TAB 3B: NSE MARKET MONITOR
   # ------------------------------------------
   with tab_mm:
-    df_mm = load_market_monitor_data()
     if not df_mm.empty:
       st.markdown(
           f"#### 📊 Nifty Total Market Breadth & VCP Indicators ({len(df_mm)} Days)"
@@ -4098,10 +4366,9 @@ with tab_market_health:
         st.rerun()
 
   # ------------------------------------------
-  # TAB 3B: SECTOR RS HEATMAP
+  # SUB-TAB 3C: SECTOR RS HEATMAP
   # ------------------------------------------
   with tab_sector_heat:
-    df_heat, _ = load_sector_monitor_data()
     if not df_heat.empty:
       st.markdown(
           "#### 🔥 27-Sector CAN SLIM Relative Strength Heatmap (Ranked by 65D RS)"
@@ -4128,10 +4395,9 @@ with tab_market_health:
         st.rerun()
 
   # ------------------------------------------
-  # TAB 3C: HISTORICAL ROTATION TRACKER
+  # SUB-TAB 3D: HISTORICAL ROTATION TRACKER
   # ------------------------------------------
   with tab_sector_rot:
-    _, df_rot = load_sector_monitor_data()
     if not df_rot.empty:
       st.markdown(
           "#### 📊 65-Day Historical Relative Strength Ranks (All Sectors)"
