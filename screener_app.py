@@ -2990,10 +2990,8 @@ with tab_screener:
     nse_bands_map = get_nse_circuit_bands()
 
     # ==========================================
-    # CURATED INSTITUTIONAL BASELINE RS RATING (1-99)
-    # Excludes illiquid penny stocks & micro-caps (Mcap < ₹100 Cr, Price < ₹10,
-    # Daily Turnover < ₹25 Lakhs) before running percentile rank.
-    # Matches MarketSmith India's curated ~2,300 liquid stock denominator.
+    # AUTHENTIC IBD-STYLE RS RATING CALCULATION (1-99)
+    # Reverted to full 4,000+ stock universe baseline before filters
     # Formula: 2 * Perf.3M + Perf.6M + Perf.Y
     # ==========================================
     if not results_df.empty:
@@ -3002,29 +3000,10 @@ with tab_screener:
       p_1y = pd.to_numeric(results_df.get("Perf.Y"), errors="coerce").fillna(0)
 
       results_df["_ibd_raw_score"] = (2 * p_3m) + p_6m + p_1y
-
-      mcap_col = pd.to_numeric(
-          results_df["market_cap_basic"], errors="coerce"
-      ).fillna(0)
-      close_col = pd.to_numeric(results_df["close"], errors="coerce").fillna(0)
-      vol_col = pd.to_numeric(results_df[tv_vol_col], errors="coerce").fillna(0)
-      turnover_col = close_col * vol_col
-
-      # Market Cap >= ₹100 Cr (1,000,000,000 INR), Price >= ₹10, Turnover >= ₹25 Lakhs
-      liquid_mask = (
-          (mcap_col >= 1_000_000_000)
-          & (close_col >= 10.0)
-          & (turnover_col >= 2_500_000)
+      rs_pct = results_df["_ibd_raw_score"].rank(pct=True, na_option="keep")
+      results_df["RS Rating"] = (
+          (rs_pct * 98 + 1).round().fillna(1).astype(int)
       )
-
-      results_df["RS Rating"] = 1  # Default fallback for illiquid laggards
-      if liquid_mask.sum() > 0:
-        rs_pct = results_df.loc[liquid_mask, "_ibd_raw_score"].rank(
-            pct=True, na_option="keep"
-        )
-        results_df.loc[liquid_mask, "RS Rating"] = (
-            (rs_pct * 98 + 1).round().fillna(1).astype(int)
-        )
 
       # Store in Session State for Watchlist Studio enrichment
       st.session_state.rs_rating_map = dict(
@@ -3552,8 +3531,7 @@ with tab_screener:
       st.subheader(f"📋 Scan Results ({len(df_display)} Stocks Found)")
       st.caption(
           "💡 **RS Rating:** IBD-Style 1-99 Percentile Score calculated across"
-          " curated institutional liquid universe (~2,300 stocks) before"
-          " applying filters."
+          " 4,000+ listed Indian equities before filters."
       )
 
       sc = st.session_state.scan_sel_counter
