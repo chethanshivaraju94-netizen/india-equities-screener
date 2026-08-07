@@ -8,6 +8,7 @@ import time
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from google import genai
+from google.genai import types
 import markdown
 import plotly.express as px
 import requests
@@ -657,8 +658,8 @@ def run_gemini_fundamental_analysis(
           break
         time.sleep(2)
 
-    prompt = f"""
-You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your sole objective is to analyze the provided Annual Report, Investor Presentations, and Earnings Call Transcripts to determine if the company ({clean_ticker}) meets Minervini's "Superperformance" criteria.
+    system_instruction = """
+You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your sole objective is to analyze uploaded Annual Reports, Investor Presentations, and Earnings Call Transcripts to determine if a company meets Minervini's "Superperformance" criteria.
 
 ### DATA & GROUND TRUTH RULES
 1. Rely ONLY on the uploaded documents and consider ONLY consolidated financial figures.
@@ -677,18 +678,14 @@ You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your
 - **FORWARD-LOOKING vs. BACKWARD-LOOKING:** Prioritize forward-looking triggers (management guidance, upcoming launches, margin expansions, pipeline) found in recent Earnings Calls over historical reasons in old reports.
 - **Base Verdict ONLY on Available Data:** Do not penalize missing data points, but strictly enforce the presence of a tangible growth catalyst.
 
----
-
-### OUTPUT FORMAT & VISUAL HIERARCHY
+### MANDATORY REPORT STRUCTURE & COMPLETER RULE (CRITICAL)
+Regardless of whether your verdict is 🟢 PASS, 🟡 WATCHLIST, or 🔴 FAIL, you MUST ALWAYS generate ALL FOUR sections below in their entirety. Do NOT abbreviate, truncate, or stop after the scorecard table for failing stocks.
 
 #### 1. HEADER & INSTANT VERDICT
 Provide the company name and an instant decision verdict:
 - **MINERVINI FUNDAMENTAL VERDICT:** [Insert 🟢 PASS / 🟡 WATCHLIST / 🔴 FAIL]
-- **🚀 PRIMARY CATALYST / BREAKOUT TRIGGER:** [State in 1-2 BOLD sentences the exact forward-looking trigger driving this stock (e.g., "New plant going live in Q3 to double capacity" OR "Credit growth accelerated to 28% with NIM expansion" OR "Large $50M TCV deal win securing H2 revenue"). If NONE found, state: "⚠️ NO CLEAR FORWARD CATALYST DETECTED"].
+- **🚀 PRIMARY CATALYST / BREAKOUT TRIGGER:** [State in 1-2 BOLD sentences the exact forward-looking trigger driving this stock. If NONE found, state: "⚠️ NO CLEAR FORWARD CATALYST DETECTED"].
 - **VERDICT LOGIC:** [Provide a 1-2 sentence justification for the overall verdict].
-  - 🟢 **PASS:** Available YoY Sales & EPS > 20%, positive Code 33 acceleration, AND a clear, validated forward catalyst.
-  - 🟡 **WATCHLIST:** Strong growth but NO clear catalyst, a minor confirmed red flag, OR a Catalyst Override applied.
-  - 🔴 **FAIL:** Confirmed Sales/EPS growth < 20%, decelerating growth, or major red flags without a massive catalyst.
 
 #### 2. SUPERPERFORMANCE SCORECARD
 Present this quick-scan summary table (Use "N/A - Not in Document" if missing):
@@ -709,20 +706,10 @@ Present this quick-scan summary table (Use "N/A - Not in Document" if missing):
   - [Bullet 2]
   - [Bullet 3]
 
----
+#### 4. DETAILED ANALYSIS BREAKDOWN
+Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail/Red Flag | 🟡 Mixed/Override | ⚠️ Warning/Watch | ⚪ Not available in document. Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
 
-### DETAILED ANALYSIS BREAKDOWN
-
-Use visual status icons at the start of each bullet:
-- 🟢 Clear Pass
-- 🔴 Fail/Red Flag
-- 🟡 Mixed / Catalyst Override Applied
-- ⚠️ Warning/Watch
-- ⚪ Not available in document
-
-Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
-
-#### SECTION 1: Growth Velocity (The Engine)
+##### SECTION 1: Growth Velocity (The Engine)
 * **Annual Revenue Growth (Consolidated):** State FY revenue and YoY % increase.
 * **Annual EPS Growth (Consolidated):** State FY EPS and YoY % increase.
 * **Annual PAT Growth (Consolidated):** State FY PAT and YoY % increase.
@@ -732,42 +719,42 @@ Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
 * **Code 33 Acceleration:** Are EPS, Sales, AND Net Margins accelerating compared to prior 2-3 quarters or same quarter last year? (**Yes / No / Data Missing**)
 * **Margin Dynamics:** Are Net and Operating Profit Margins expanding or contracting YoY?
 
-#### SECTION 2: Sector-Adaptive Catalyst & Forward Triggers (Concall & PPT Extraction)
-* **Primary Sector Catalyst:** Identify the primary growth driver based on the industry (e.g., CapEx/Order Book for Industrial; NIM/Credit growth for Banks; Deal wins/Margins for IT; Volume/SSSG/Stores for Retail; FDA/Launches for Pharma).
+##### SECTION 2: Sector-Adaptive Catalyst & Forward Triggers (Concall & PPT Extraction)
+* **Primary Sector Catalyst:** Identify the primary growth driver based on the industry.
 * **Catalyst Magnitude & Timeline:** Is this a game-changing trigger taking effect in the next 1-4 quarters? State exact management commentary or guidance.
 * **Institutional Sponsorship (FII/DII Trend):** Did FII, DII, or Mutual Fund shareholding increase in the most recent quarter compared to the previous quarter? (**Yes / No / Data Missing**)
 * **Competitive Advantage & Scalability:** Is the growth model scalable without excessive capital burn?
 * **Market Leadership & Order Book:** Is the company a market leader (#1 or #2 in its niche) or gaining market share? State exact order book figures if present.
 
-#### SECTION 3: Quality of Earnings & Red Flags
+##### SECTION 3: Quality of Earnings & Red Flags
 * **Cash Flow from Operations:** Net cash inflow from operating activities (CFO) trend and comparison with Net Profit.
 * **Debt Load & Solvency:** Debt to Equity ratio, NPA profile for financials, and interest coverage.
 * ⚠️ **Inventory vs. Sales Growth:** Is inventory growing faster than sales? State exact growth rate comparison if present.
 * ⚠️ **Receivables vs. Sales Growth:** Are accounts receivable growing faster than sales? State exact trends.
 * **Tax Rate Distortion & Source of Profit:** Was there an artificial boost to EPS from lower effective tax rate or other non-operating income?
-
----
-CRITICAL COMPLETION MANDATE:
-You MUST generate ALL sections of this template from top to bottom (Header, Scorecard, BLUF, SECTION 1, SECTION 2, and SECTION 3) without stopping early or truncating output.
 """
 
-    gen_config = {
-        "service_tier": "flex",
-        "temperature": 0.2,
-        "max_output_tokens": 8192,
-    }
+    user_prompt = f"""
+Analyze {clean_ticker} using all uploaded Screener.in documents. Generate the complete, uncompromising Mark Minervini Fundamental Analysis Report following all 4 mandatory sections in the system instructions without omitting any section. Even if the verdict is 🔴 FAIL or 🟡 WATCHLIST, you MUST generate the full BLUF and all Detailed Analysis Breakdown sections.
+"""
+
+    gen_config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        temperature=0.1,
+        max_output_tokens=8192,
+    )
 
     try:
       response = client.models.generate_content(
           model="gemini-2.5-flash",
-          contents=[prompt] + uploaded_files,
+          contents=[user_prompt] + uploaded_files,
           config=gen_config,
       )
     except Exception as e:
       if "tokens allowed" in str(e) or "400" in str(e):
         response = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=[prompt] + uploaded_files[:4],
+            contents=[user_prompt] + uploaded_files[:3],
             config=gen_config,
         )
       else:
