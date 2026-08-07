@@ -4,7 +4,6 @@ import json
 import os
 import re
 import smtplib
-import threading
 import time
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
@@ -411,63 +410,21 @@ if "scan_sel_counter" not in st.session_state:
 if "wl_sel_counter" not in st.session_state:
   st.session_state.wl_sel_counter = 0
 
-# ==========================================
-# UNSTOPPABLE BACKGROUND AI WORKER TRACKER
-# ==========================================
-GLOBAL_AI_WORKER_STATE = {
-    "is_running": False,
-    "total": 0,
-    "completed": 0,
-    "current_ticker": "",
-    "message": "",
-    "last_updated": 0,
-}
-
-
-def background_ai_worker(symbols_list, force_reanalyze, reports_dict):
-  GLOBAL_AI_WORKER_STATE["is_running"] = True
-  GLOBAL_AI_WORKER_STATE["total"] = len(symbols_list)
-  GLOBAL_AI_WORKER_STATE["completed"] = 0
-
-  for idx, sym in enumerate(symbols_list):
-    clean_sym = sym.split(":")[-1].strip().upper()
-    GLOBAL_AI_WORKER_STATE["current_ticker"] = clean_sym
-    GLOBAL_AI_WORKER_STATE["message"] = (
-        f"Analyzing ({idx + 1}/{len(symbols_list)}): {clean_sym} — Downloading"
-        " PDFs & Running Gemini..."
-    )
-
-    if clean_sym in reports_dict and not force_reanalyze:
-      GLOBAL_AI_WORKER_STATE["completed"] += 1
-      continue
-
-    try:
-      new_rep = run_gemini_fundamental_analysis(clean_sym, reports_dict)
-      if new_rep:
-        reports_dict[clean_sym] = new_rep
-    except Exception as e:
-      print(f"Background AI Worker Error ({clean_sym}): {e}")
-
-    GLOBAL_AI_WORKER_STATE["completed"] += 1
-    GLOBAL_AI_WORKER_STATE["last_updated"] = time.time()
-
-  GLOBAL_AI_WORKER_STATE["is_running"] = False
-  GLOBAL_AI_WORKER_STATE["message"] = (
-      f"✅ Completed AI Fundamental Analysis for {len(symbols_list)} stocks!"
-  )
-  GLOBAL_AI_WORKER_STATE["last_updated"] = time.time()
-
 
 # ==========================================
 # GEMINI FUNDAMENTAL AI ANALYST ENGINE
 # ==========================================
-def run_gemini_fundamental_analysis(ticker_input, reports_store=None):
+def run_gemini_fundamental_analysis(
+    ticker_input, reports_store=None, status_log=None
+):
   gemini_key = st.secrets.get("GEMINI_API_KEY", "")
   screener_sid = st.secrets.get("SCREENER_SESSION_ID", "")
   email_addr = st.secrets.get("EMAIL_ADDRESS", "")
   email_pass = st.secrets.get("EMAIL_APP_PASSWORD", "")
 
   if not gemini_key:
+    if status_log:
+      status_log.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets!")
     return None
 
   client = genai.Client(api_key=gemini_key)
@@ -496,13 +453,24 @@ def run_gemini_fundamental_analysis(ticker_input, reports_store=None):
   url = f"https://www.screener.in/company/{clean_ticker}/consolidated/"
 
   try:
+    if status_log:
+      status_log.write(f"📡 **{clean_ticker}:** Accessing Screener.in page...")
     res = requests.get(url, headers=headers, cookies=cookies, timeout=20)
     if res.status_code != 200:
+      if status_log:
+        status_log.error(
+            f"❌ **{clean_ticker}:** Could not access Screener.in page (HTTP"
+            f" {res.status_code})."
+        )
       return None
 
     soup = BeautifulSoup(res.content, "html.parser")
     documents_section = soup.find(id="documents")
     if not documents_section:
+      if status_log:
+        status_log.warning(
+            f"⚠️ **{clean_ticker}:** No documents section found on Screener.in."
+        )
       return None
 
     ars, transcripts, ppts = [], [], []
@@ -543,6 +511,11 @@ def run_gemini_fundamental_analysis(ticker_input, reports_store=None):
         pass
       return False
 
+    if status_log:
+      status_log.write(
+          f"📥 **{clean_ticker}:** Downloading latest Annual Report,"
+          " Transcripts & PPTs..."
+      )
     for t, h in ars[:1]:
       try_download("Annual Report", h)
     for t, h in transcripts[:4]:
@@ -552,8 +525,17 @@ def run_gemini_fundamental_analysis(ticker_input, reports_store=None):
 
     pdf_files = glob.glob(f"{download_dir}/*.pdf")
     if not pdf_files:
+      if status_log:
+        status_log.error(
+            f"❌ **{clean_ticker}:** Could not download any valid PDF reports."
+        )
       return None
 
+    if status_log:
+      status_log.write(
+          f"🤖 **{clean_ticker}:** Uploading {len(pdf_files)} PDFs to Gemini"
+          " 2.5 Flash..."
+      )
     uploaded_files = [client.files.upload(file=fp) for fp in pdf_files]
     for f in uploaded_files:
       while True:
@@ -665,6 +647,12 @@ Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail
       st.session_state.fundamental_reports[clean_ticker] = report_entry
       save_fundamental_reports(st.session_state.fundamental_reports)
 
+    if status_log:
+      status_log.write(
+          f"✅ **{clean_ticker}:** Analysis complete! Verdict ->"
+          f" **{verdict}** (Saved to Gist)"
+      )
+
     # Optional Email Sender
     if email_addr and email_pass:
       try:
@@ -688,7 +676,9 @@ Use visual status icons at the start of each bullet: 🟢 Clear Pass | 🔴 Fail
 
     return report_entry
 
-  except Exception:
+  except Exception as e:
+    if status_log:
+      status_log.error(f"❌ **{clean_ticker}:** Analysis failed -> {e}")
     return None
 
 
@@ -1163,9 +1153,7 @@ def get_wl_dots(symbol, watchlists_dict):
 # ==========================================
 # VISUAL CIRCUIT STOCK BADGE HELPER
 # ==========================================
-def is_circuit_stock_badge(row, bands_map=None):
-  if not isinstance(bands_map, dict):
-    bands_map = {}
+def is_circuit_stock_badge(row, bands_map):
   sym = str(row.get("name", "")).replace("🚨", "").strip().upper()
   band_val = bands_map.get(sym, "")
   if band_val in ["2", "5", "10"]:
@@ -2567,7 +2555,7 @@ with tab_screener:
         ma_cols_to_fetch,
         max_results,
     )
-    nse_bands_map = get_nse_circuit_bands() or {}
+    nse_bands_map = get_nse_circuit_bands()
 
   if results_df.empty:
     st.warning(
@@ -2962,9 +2950,6 @@ with tab_screener:
           + "/consolidated/"
       )
 
-      # ----------------------------------------------------
-      # VECTORIZED ZERO-LAG WATCHLIST DOT MAPPER (< 0.01s)
-      # ----------------------------------------------------
       wl_dot_map = {}
       for wl_name, sym_list in st.session_state.watchlists.items():
         dot = (
@@ -3000,9 +2985,6 @@ with tab_screener:
           axis=1,
       )
 
-      # ----------------------------------------------------
-      # VECTORIZED ZERO-LAG CIRCUIT BADGE MAPPER (< 0.01s)
-      # ----------------------------------------------------
       df_display["_in_band"] = (
           df_display["name"].str.upper().map(nse_bands_map)
       )
@@ -3017,9 +2999,6 @@ with tab_screener:
           ~df_display["_is_circuit_badge"], df_display["name"] + " 🚨"
       )
 
-      # ----------------------------------------------------
-      # VECTORIZED ZERO-LAG FUNDAMENTAL BADGE MAPPER (< 0.01s)
-      # ----------------------------------------------------
       fund_badge_map = {
           k: f"{v.get('verdict')} ({v.get('date', '')})"
           for k, v in st.session_state.fundamental_reports.items()
@@ -3148,35 +3127,43 @@ with tab_screener:
         )
 
       if run_batch_scan and len(selected_rows) > 0:
-        if not GLOBAL_AI_WORKER_STATE["is_running"]:
-          t = threading.Thread(
-              target=background_ai_worker,
-              args=(
-                  selected_rows,
-                  force_reanalyze_scan,
+        with st.status(
+            "🧠 Minervini Fundamental AI Analyst — Active Queue",
+            expanded=True,
+        ) as status_box:
+          p_bar = st.progress(0.0)
+          for idx, sym in enumerate(selected_rows):
+            clean_sym = sym.split(":")[-1].strip().upper()
+            if (
+                clean_sym in st.session_state.fundamental_reports
+                and not force_reanalyze_scan
+            ):
+              status_box.write(
+                  f"⏩ **[{idx + 1}/{len(selected_rows)}] {clean_sym}:** Report"
+                  " already exists in Gist. (Check 'Force Re-Analyze' to"
+                  " overwrite)"
+              )
+            else:
+              status_box.write(
+                  f"⚙️ **[{idx + 1}/{len(selected_rows)}] {clean_sym}:**"
+                  " Downloading Screener.in PDFs & Running Gemini 2.5"
+                  " Flash..."
+              )
+              run_gemini_fundamental_analysis(
+                  clean_sym,
                   st.session_state.fundamental_reports,
-              ),
-              daemon=True,
-          )
-          t.start()
-          st.rerun()
+                  status_log=status_box,
+              )
 
-      if GLOBAL_AI_WORKER_STATE["is_running"]:
-        st.info(
-            "⚙️ **Background AI Worker Active:**"
-            f" {GLOBAL_AI_WORKER_STATE['message']} *(You can freely"
-            " check/uncheck boxes or switch watchlists — analysis will not"
-            " abort!)*"
-        )
-        st.progress(
-            GLOBAL_AI_WORKER_STATE["completed"]
-            / max(1, GLOBAL_AI_WORKER_STATE["total"])
-        )
-      elif (
-          GLOBAL_AI_WORKER_STATE["message"]
-          and time.time() - GLOBAL_AI_WORKER_STATE["last_updated"] < 60
-      ):
-        st.success(GLOBAL_AI_WORKER_STATE["message"])
+            p_bar.progress((idx + 1) / len(selected_rows))
+
+          status_box.update(
+              label="✅ Batch AI Analysis Complete! Updating Table...",
+              state="complete",
+              expanded=True,
+          )
+          time.sleep(1.5)
+          st.rerun()
 
       st.markdown("---")
       cw1, cw2, cw3, cw4 = st.columns([1.8, 1.5, 2.0, 0.9])
@@ -3713,34 +3700,42 @@ with tab_watchlists:
       )
 
     if run_batch_wl and len(sel_symbols) > 0:
-      if not GLOBAL_AI_WORKER_STATE["is_running"]:
-        t = threading.Thread(
-            target=background_ai_worker,
-            args=(
-                sel_symbols,
-                force_reanalyze_wl,
+      with st.status(
+          "🧠 Minervini Fundamental AI Analyst — Active Queue",
+          expanded=True,
+      ) as status_box_wl:
+        p_bar = st.progress(0.0)
+        for idx, sym in enumerate(sel_symbols):
+          clean_sym = sym.split(":")[-1].strip().upper()
+          if (
+              clean_sym in st.session_state.fundamental_reports
+              and not force_reanalyze_wl
+          ):
+            status_box_wl.write(
+                f"⏩ **[{idx + 1}/{len(sel_symbols)}] {clean_sym}:** Report"
+                " already exists in Gist. (Check 'Force Re-Analyze' to"
+                " overwrite)"
+            )
+          else:
+            status_box_wl.write(
+                f"⚙️ **[{idx + 1}/{len(sel_symbols)}] {clean_sym}:**"
+                " Downloading Screener.in PDFs & Running Gemini 2.5 Flash..."
+            )
+            run_gemini_fundamental_analysis(
+                clean_sym,
                 st.session_state.fundamental_reports,
-            ),
-            daemon=True,
-        )
-        t.start()
-        st.rerun()
+                status_log=status_box_wl,
+            )
 
-    if GLOBAL_AI_WORKER_STATE["is_running"]:
-      st.info(
-          "⚙️ **Background AI Worker Active:**"
-          f" {GLOBAL_AI_WORKER_STATE['message']} *(You can freely check/uncheck"
-          " boxes or switch watchlists — analysis will not abort!)*"
-      )
-      st.progress(
-          GLOBAL_AI_WORKER_STATE["completed"]
-          / max(1, GLOBAL_AI_WORKER_STATE["total"])
-      )
-    elif (
-        GLOBAL_AI_WORKER_STATE["message"]
-        and time.time() - GLOBAL_AI_WORKER_STATE["last_updated"] < 60
-    ):
-      st.success(GLOBAL_AI_WORKER_STATE["message"])
+          p_bar.progress((idx + 1) / len(sel_symbols))
+
+        status_box_wl.update(
+            label="✅ Batch AI Analysis Complete! Updating Table...",
+            state="complete",
+            expanded=True,
+        )
+        time.sleep(1.5)
+        st.rerun()
 
     c_rem, c_clr, c_promo_sel, c_promo_btn = st.columns([1.5, 1.2, 2.0, 1.5])
     with c_rem:
