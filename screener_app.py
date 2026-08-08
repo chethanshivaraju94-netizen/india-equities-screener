@@ -1,1818 +1,3 @@
-import glob
-import io
-import json
-import os
-import re
-import smtplib
-import time
-from datetime import datetime, date
-from urllib.parse import urljoin
-from bs4 import BeautifulSoup
-from google import genai
-import markdown
-import plotly.express as px
-import requests
-import pandas as pd
-import numpy as np
-import streamlit as st
-from tradingview_screener import Query, col
-
-# ==========================================
-# PAGE CONFIGURATION
-# ==========================================
-st.set_page_config(
-    page_title="India Equities Screener & Watchlist Studio",
-    page_icon="📈",
-    layout="wide",
-)
-
-# ==========================================
-# CUSTOM SLEEK CSS FOR ST.TABLE (NO WRAPPING & FIXED WIDTHS)
-# ==========================================
-TABLE_CUSTOM_CSS = """
-<style>
-div[data-testid="stTable"] {
-    overflow-x: auto !important;
-}
-div[data-testid="stTable"] table {
-    width: 100% !important;
-    border-collapse: collapse !important;
-    font-size: 13px !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-}
-div[data-testid="stTable"] th {
-    padding: 8px 12px !important;
-    text-align: center !important;
-    font-weight: 600 !important;
-    white-space: nowrap !important;
-    background-color: #1E222D !important;
-    color: #E0E2EC !important;
-    border-bottom: 2px solid #2B2F3E !important;
-    min-width: 85px !important;
-}
-div[data-testid="stTable"] td {
-    padding: 7px 12px !important;
-    text-align: center !important;
-    white-space: nowrap !important;
-    border-bottom: 1px solid #2B2F3E !important;
-    min-width: 85px !important;
-}
-div[data-testid="stTable"] th:nth-child(1),
-div[data-testid="stTable"] td:nth-child(1) {
-    text-align: left !important;
-    font-weight: 600 !important;
-    white-space: nowrap !important;
-    min-width: 115px !important;
-    max-width: 150px !important;
-}
-</style>
-"""
-st.markdown(TABLE_CUSTOM_CSS, unsafe_allow_html=True)
-
-# ==========================================
-# 0. AUTOMATIC GITHUB GIST PERSISTENCE
-# ==========================================
-WATCHLIST_FILE = "local_watchlists.json"
-PRESETS_FILE = "local_filter_presets.json"
-REPORTS_FILE = "local_fundamental_reports.json"
-BRIEFINGS_FILE = "local_market_briefings.json"
-TRADEBOOK_FILE = "local_tradebook.json"
-
-GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)
-GIST_ID = st.secrets.get("GIST_ID", None)
-
-
-def load_watchlists():
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      res = requests.get(
-          f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5
-      )
-      if res.status_code == 200:
-        gist_data = res.json()
-        if "local_watchlists.json" in gist_data["files"]:
-          content = gist_data["files"]["local_watchlists.json"]["content"]
-          return json.loads(content)
-    except Exception as e:
-      st.warning(f"GitHub Gist load failed, switching to local disk: {e}")
-
-  if os.path.exists(WATCHLIST_FILE):
-    try:
-      with open(WATCHLIST_FILE, "r") as f:
-        return json.load(f)
-    except Exception:
-      pass
-
-  return {
-      "Post Breakout Monitor": ["NSE:ZOMATO", "NSE:CDSL", "NSE:TITAGARH"],
-      "Focus List": ["NSE:JINDWORLD", "NSE:TRENT", "NSE:HAL", "NSE:RECLTD"],
-      "Weekly Focus": ["NSE:BHEL", "NSE:ABB", "NSE:SIEMENS", "NSE:CGPOWER"],
-      "Scan Bulk": [],
-      "Sold Stocks": [],
-  }
-
-
-def save_watchlists(watchlists_dict):
-  try:
-    with open(WATCHLIST_FILE, "w") as f:
-      json.dump(watchlists_dict, f, indent=2)
-  except Exception:
-    pass
-
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      payload = {
-          "files": {
-              "local_watchlists.json": {
-                  "content": json.dumps(watchlists_dict, indent=2)
-              }
-          }
-      }
-      requests.patch(
-          f"https://api.github.com/gists/{GIST_ID}",
-          headers=headers,
-          json=payload,
-          timeout=5,
-      )
-    except Exception:
-      pass
-
-
-def load_filter_presets():
-  default_ma_configs = [
-      {"en": True, "type": "EMA", "len": 21},
-      {"en": True, "type": "SMA", "len": 50},
-      {"en": False, "type": "SMA", "len": 200},
-      {"en": False, "type": "EMA", "len": 10},
-      {"en": False, "type": "SMA", "len": 150},
-  ]
-  default_presets = {
-      "🏆 CAN SLIM & Growth Breakout": {
-          "exchanges": ["NSE", "BSE"],
-          "sectors": [],
-          "industries": [],
-          "indices": [],
-          "min_mcap_cr": 1000,
-          "vol_period_days": 60,
-          "min_vol_cr": 5.0,
-          "en_ipo": False,
-          "ipo_filter": "All Stocks (No IPO Filter)",
-          "en_eps_q": True,
-          "min_eps_q": 15.0,
-          "en_sales_q": True,
-          "min_sales_q": 10.0,
-          "allow_na_growth": True,
-          "en_rs_rating": True,
-          "min_rs_rating": 80,
-          "en_adr": True,
-          "min_adr": 2.5,
-          "en_above_52l": True,
-          "min_above_52l": 20,
-          "en_below_52h": True,
-          "max_below_52h": 25,
-          "en_circuit": True,
-          "circuit_val": ["2%", "5%", "10%"],
-          "selected_perf_labels": [
-              "1 Week",
-              "1 Month",
-              "3 Months",
-              "6 Months",
-          ],
-          "max_results": 4000,
-          "ma_configs": default_ma_configs,
-          "perf_configs": {
-              c: {"en": False, "val": 0.0}
-              for c in [
-                  "Perf.W",
-                  "Perf.1M",
-                  "Perf.3M",
-                  "Perf.6M",
-                  "Perf.YTD",
-                  "Perf.Y",
-              ]
-          },
-      },
-      "⚡ High ADR Momentum (>4%)": {
-          "exchanges": ["NSE", "BSE"],
-          "sectors": [],
-          "industries": [],
-          "indices": [],
-          "min_mcap_cr": 500,
-          "vol_period_days": 30,
-          "min_vol_cr": 10.0,
-          "en_ipo": False,
-          "ipo_filter": "All Stocks (No IPO Filter)",
-          "en_eps_q": False,
-          "min_eps_q": 0.0,
-          "en_sales_q": False,
-          "min_sales_q": 0.0,
-          "allow_na_growth": True,
-          "en_rs_rating": True,
-          "min_rs_rating": 85,
-          "en_adr": True,
-          "min_adr": 4.0,
-          "en_above_52l": True,
-          "min_above_52l": 30,
-          "en_below_52h": True,
-          "max_below_52h": 15,
-          "en_circuit": True,
-          "circuit_val": ["2%", "5%", "10%"],
-          "selected_perf_labels": ["1 Week", "1 Month", "3 Months"],
-          "max_results": 4000,
-          "ma_configs": default_ma_configs,
-          "perf_configs": {
-              c: {"en": False, "val": 0.0}
-              for c in [
-                  "Perf.W",
-                  "Perf.1M",
-                  "Perf.3M",
-                  "Perf.6M",
-                  "Perf.YTD",
-                  "Perf.Y",
-              ]
-          },
-      },
-      "🛡️ Nifty 500 Core Compounders": {
-          "exchanges": ["NSE"],
-          "sectors": [],
-          "industries": [],
-          "indices": ["NIFTY 500"],
-          "min_mcap_cr": 5000,
-          "vol_period_days": 60,
-          "min_vol_cr": 15.0,
-          "en_ipo": True,
-          "ipo_filter": "Seasoned: Listed > 1 Year Ago",
-          "en_eps_q": True,
-          "min_eps_q": 10.0,
-          "en_sales_q": True,
-          "min_sales_q": 10.0,
-          "allow_na_growth": False,
-          "en_rs_rating": True,
-          "min_rs_rating": 75,
-          "en_adr": True,
-          "min_adr": 1.5,
-          "en_above_52l": True,
-          "min_above_52l": 15,
-          "en_below_52h": True,
-          "max_below_52h": 35,
-          "en_circuit": False,
-          "circuit_val": ["2%", "5%", "10%"],
-          "selected_perf_labels": [
-              "1 Month",
-              "3 Months",
-              "6 Months",
-              "1 Year",
-          ],
-          "max_results": 4000,
-          "ma_configs": [
-              {"en": True, "type": "EMA", "len": 21},
-              {"en": True, "type": "SMA", "len": 50},
-              {"en": True, "type": "SMA", "len": 200},
-              {"en": False, "type": "EMA", "len": 10},
-              {"en": False, "type": "SMA", "len": 150},
-          ],
-          "perf_configs": {
-              c: {"en": False, "val": 0.0}
-              for c in [
-                  "Perf.W",
-                  "Perf.1M",
-                  "Perf.3M",
-                  "Perf.6M",
-                  "Perf.YTD",
-                  "Perf.Y",
-              ]
-          },
-      },
-  }
-
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      res = requests.get(
-          f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5
-      )
-      if res.status_code == 200:
-        gist_data = res.json()
-        if PRESETS_FILE in gist_data["files"]:
-          content = gist_data["files"][PRESETS_FILE]["content"]
-          return json.loads(content)
-    except Exception:
-      pass
-
-  if os.path.exists(PRESETS_FILE):
-    try:
-      with open(PRESETS_FILE, "r") as f:
-        return json.load(f)
-    except Exception:
-      pass
-
-  return default_presets
-
-
-def save_filter_presets(presets_dict):
-  try:
-    with open(PRESETS_FILE, "w") as f:
-      json.dump(presets_dict, f, indent=2)
-  except Exception:
-    pass
-
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      payload = {
-          "files": {PRESETS_FILE: {"content": json.dumps(presets_dict, indent=2)}}
-      }
-      requests.patch(
-          f"https://api.github.com/gists/{GIST_ID}",
-          headers=headers,
-          json=payload,
-          timeout=5,
-      )
-    except Exception:
-      pass
-
-
-# ==========================================
-# GIST PERSISTENCE FOR TRADEBOOK, REPORTS & BRIEFINGS
-# ==========================================
-def load_fundamental_reports():
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      res = requests.get(
-          f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5
-      )
-      if res.status_code == 200:
-        gist_data = res.json()
-        if REPORTS_FILE in gist_data["files"]:
-          content = gist_data["files"][REPORTS_FILE]["content"]
-          return json.loads(content)
-    except Exception:
-      pass
-
-  if os.path.exists(REPORTS_FILE):
-    try:
-      with open(REPORTS_FILE, "r") as f:
-        return json.load(f)
-    except Exception:
-      pass
-
-  return {}
-
-
-def save_fundamental_reports(reports_dict):
-  try:
-    with open(REPORTS_FILE, "w") as f:
-      json.dump(reports_dict, f, indent=2)
-  except Exception:
-    pass
-
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      payload = {
-          "files": {REPORTS_FILE: {"content": json.dumps(reports_dict, indent=2)}}
-      }
-      requests.patch(
-          f"https://api.github.com/gists/{GIST_ID}",
-          headers=headers,
-          json=payload,
-          timeout=5,
-      )
-    except Exception:
-      pass
-
-
-def load_market_briefings():
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      res = requests.get(
-          f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5
-      )
-      if res.status_code == 200:
-        gist_data = res.json()
-        if BRIEFINGS_FILE in gist_data["files"]:
-          content = gist_data["files"][BRIEFINGS_FILE]["content"]
-          return json.loads(content)
-    except Exception:
-      pass
-
-  if os.path.exists(BRIEFINGS_FILE):
-    try:
-      with open(BRIEFINGS_FILE, "r") as f:
-        return json.load(f)
-    except Exception:
-      pass
-
-  return {}
-
-
-def save_market_briefings(briefings_dict):
-  try:
-    with open(BRIEFINGS_FILE, "w") as f:
-      json.dump(briefings_dict, f, indent=2)
-  except Exception:
-    pass
-
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      payload = {
-          "files": {BRIEFINGS_FILE: {"content": json.dumps(briefings_dict, indent=2)}}
-      }
-      requests.patch(
-          f"https://api.github.com/gists/{GIST_ID}",
-          headers=headers,
-          json=payload,
-          timeout=5,
-      )
-    except Exception:
-      pass
-
-
-def load_tradebook():
-  default_tb = {"config": {"starting_capital": 500000.0}, "trades": []}
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      res = requests.get(
-          f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=5
-      )
-      if res.status_code == 200:
-        gist_data = res.json()
-        if TRADEBOOK_FILE in gist_data["files"]:
-          content = gist_data["files"][TRADEBOOK_FILE]["content"]
-          return json.loads(content)
-    except Exception:
-      pass
-
-  if os.path.exists(TRADEBOOK_FILE):
-    try:
-      with open(TRADEBOOK_FILE, "r") as f:
-        return json.load(f)
-    except Exception:
-      pass
-
-  return default_tb
-
-
-def save_tradebook(tb_dict):
-  try:
-    with open(TRADEBOOK_FILE, "w") as f:
-      json.dump(tb_dict, f, indent=2)
-  except Exception:
-    pass
-
-  if GITHUB_TOKEN and GIST_ID:
-    try:
-      headers = {
-          "Authorization": f"token {GITHUB_TOKEN}",
-          "Accept": "application/vnd.github.v3+json",
-      }
-      payload = {
-          "files": {TRADEBOOK_FILE: {"content": json.dumps(tb_dict, indent=2)}}
-      }
-      requests.patch(
-          f"https://api.github.com/gists/{GIST_ID}",
-          headers=headers,
-          json=payload,
-          timeout=5,
-      )
-    except Exception:
-      pass
-
-
-if "watchlists" not in st.session_state:
-  st.session_state.watchlists = load_watchlists()
-if "active_watchlist_name" not in st.session_state:
-  st.session_state.active_watchlist_name = list(
-      st.session_state.watchlists.keys()
-  )[0]
-if "filter_presets" not in st.session_state:
-  st.session_state.filter_presets = load_filter_presets()
-if "fundamental_reports" not in st.session_state:
-  st.session_state.fundamental_reports = load_fundamental_reports()
-if "market_briefings" not in st.session_state:
-  st.session_state.market_briefings = load_market_briefings()
-if "tradebook" not in st.session_state:
-  st.session_state.tradebook = load_tradebook()
-if "active_scan_summary" not in st.session_state:
-  st.session_state.active_scan_summary = {}
-if "rs_rating_map" not in st.session_state:
-  st.session_state.rs_rating_map = {}
-if "reset_counter" not in st.session_state:
-  st.session_state.reset_counter = 0
-if "scan_sel_counter" not in st.session_state:
-  st.session_state.scan_sel_counter = 0
-if "wl_sel_counter" not in st.session_state:
-  st.session_state.wl_sel_counter = 0
-
-
-# ==========================================
-# BENCHMARK NIFTY 500 LOOKUP HELPER
-# ==========================================
-def fetch_nifty500_close_on_date(date_str, df_mm=None):
-  try:
-    if (
-        df_mm is not None
-        and not df_mm.empty
-        and "Date" in df_mm.columns
-        and "Nifty 500 Close" in df_mm.columns
-    ):
-      match = df_mm[df_mm["Date"] == date_str]
-      if not match.empty:
-        val = pd.to_numeric(match.iloc[0]["Nifty 500 Close"], errors="coerce")
-        if pd.notna(val) and val > 0:
-          return float(val)
-  except Exception:
-    pass
-
-  try:
-    dt_obj = pd.to_datetime(date_str)
-    p_start = int(dt_obj.timestamp())
-    p_end = p_start + 86400 * 4
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/^CRSLDX?period1={p_start}&period2={p_end}&interval=1d"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers, timeout=5)
-    if res.status_code == 200:
-      data = res.json()
-      quotes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-      for q in quotes:
-        if q is not None and q > 0:
-          return float(q)
-  except Exception:
-    pass
-
-  return 23700.0
-
-
-# ==========================================
-# BULLETPROOF PDF GENERATOR ENGINE
-# ==========================================
-def create_pdf_bytes(ticker, report_md):
-  try:
-    from fpdf import FPDF
-  except ImportError:
-    return report_md.encode("utf-8")
-
-  def sanitize_for_pdf(text):
-    if not text:
-      return ""
-    replacements = {
-        "🟢": "[PASS] ",
-        "🔴": "[FAIL] ",
-        "🟡": "[WATCH] ",
-        "⚠️": "[WARN] ",
-        "🚀": "[CATALYST] ",
-        "⚪": "[N/A] ",
-        "🟣": "[REVIEW] ",
-        "📊": "",
-        "🏥": "",
-        "📈": "",
-        "🔥": "",
-        "📋": "",
-        "🧠": "",
-        "⭐": "",
-        "🎯": "[TARGET] ",
-        "🚨": "[CIRCUIT] ",
-        "₹": "Rs. ",
-        "—": "-",
-        "–": "-",
-        "“": '"',
-        "”": '"',
-        "‘": "'",
-        "’": "'",
-        "•": "*",
-        "…": "...",
-    }
-    for k, v in replacements.items():
-      text = text.replace(k, v)
-    return text.encode("latin-1", "replace").decode("latin-1")
-
-  class PDF(FPDF):
-
-    def header(self):
-      self.set_font("Helvetica", "B", 10)
-      self.set_text_color(100, 100, 100)
-      self.cell(
-          0,
-          8,
-          sanitize_for_pdf(f"MINERVINI FUNDAMENTAL AI REPORT - {ticker}"),
-          ln=True,
-          align="R",
-      )
-      self.line(10, 16, 200, 16)
-      self.ln(4)
-
-    def footer(self):
-      self.set_y(-15)
-      self.set_font("Helvetica", "I", 8)
-      self.set_text_color(128, 128, 128)
-      self.cell(
-          0,
-          10,
-          sanitize_for_pdf(
-              f"Page {self.page_no()} | Generated by India Equities Screener Studio"
-          ),
-          align="C",
-      )
-
-  try:
-    pdf = PDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(15, 23, 42)
-    pdf.cell(
-        0,
-        8,
-        sanitize_for_pdf(f"{ticker} Fundamental Analysis Report"),
-        ln=True,
-        align="L",
-    )
-    pdf.ln(2)
-
-    pdf.set_font("Helvetica", size=9)
-    for line in report_md.split("\n"):
-      line_str = sanitize_for_pdf(line.strip())
-      if not line_str:
-        pdf.ln(1.5)
-        continue
-      if line_str.startswith("#### ") or line_str.startswith("### "):
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.set_text_color(20, 50, 120)
-        pdf.cell(0, 6, line_str.replace("#", "").strip(), ln=True)
-        pdf.set_font("Helvetica", size=9)
-        pdf.set_text_color(0, 0, 0)
-      elif line_str.startswith("## ") or line_str.startswith("# "):
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(15, 23, 42)
-        pdf.cell(0, 7, line_str.replace("#", "").strip(), ln=True)
-        pdf.set_font("Helvetica", size=9)
-        pdf.set_text_color(0, 0, 0)
-      else:
-        pdf.multi_cell(0, 4.5, line_str)
-        pdf.ln(0.5)
-
-    return bytes(pdf.output())
-  except Exception:
-    return report_md.encode("utf-8")
-
-
-# ==========================================
-# GEMINI FUNDAMENTAL AI ANALYST ENGINE
-# ==========================================
-def run_gemini_fundamental_analysis(
-    ticker_input, reports_store=None, status_log=None
-):
-  gemini_key = st.secrets.get("GEMINI_API_KEY", "")
-  screener_sid = st.secrets.get("SCREENER_SESSION_ID", "")
-  email_addr = st.secrets.get("EMAIL_ADDRESS", "chethanshivaraju7@gmail.com")
-  email_pass = st.secrets.get("EMAIL_APP_PASSWORD", "")
-
-  if not gemini_key:
-    if status_log:
-      status_log.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets!")
-    return None
-
-  client = genai.Client(api_key=gemini_key)
-
-  headers = {
-      "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-          " (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-      ),
-      "Accept": (
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-      ),
-      "Referer": "https://www.screener.in/",
-  }
-  cookies = {"sessionid": screener_sid}
-
-  clean_ticker = (
-      ticker_input.split(":")[-1].strip().upper()
-      if ":" in str(ticker_input)
-      else str(ticker_input).strip().upper()
-  )
-  download_dir = "documents"
-  os.makedirs(download_dir, exist_ok=True)
-  for f in glob.glob(f"{download_dir}/*"):
-    os.remove(f)
-
-  url = f"https://www.screener.in/company/{clean_ticker}/consolidated/"
-
-  try:
-    if status_log:
-      status_log.write(f"📡 **{clean_ticker}:** Accessing Screener.in page...")
-    response = requests.get(url, headers=headers, cookies=cookies, timeout=20)
-    if response.status_code != 200:
-      if status_log:
-        status_log.error(
-            f"❌ **{clean_ticker}:** Could not access Screener.in page (HTTP"
-            f" {response.status_code})."
-        )
-      return None
-
-    soup = BeautifulSoup(response.content, "html.parser")
-    documents_section = soup.find(id="documents")
-
-    if not documents_section:
-      if status_log:
-        status_log.warning(
-            f"⚠️ **{clean_ticker}:** No documents section found on Screener.in."
-        )
-      return None
-
-    ars, transcripts, ppts = [], [], []
-    links = documents_section.find_all("a", href=True)
-
-    for link in links:
-      href = link["href"]
-      text = link.get_text(strip=True).lower()
-
-      if "financial year" in text or "annual report" in text:
-        ars.append(("Annual Report", href))
-      elif text == "transcript":
-        transcripts.append(("Transcript", href))
-      elif text == "ppt":
-        ppts.append(("PPT", href))
-
-    if status_log:
-      status_log.write(
-          f"Discovered: {len(ars)} ARs, {len(transcripts)} Transcripts,"
-          f" {len(ppts)} PPTs."
-      )
-
-    state = {"count": 0, "urls": set()}
-
-    def try_download(text, href):
-      if href in state["urls"]:
-        return False
-
-      full_url = (
-          href
-          if href.startswith("http")
-          else urljoin("https://www.screener.in", href)
-      )
-
-      try:
-        doc_response = requests.get(
-            full_url, headers=headers, cookies=cookies, timeout=30, allow_redirects=True
-        )
-        if b"%PDF" in doc_response.content[:100]:
-          file_name = f"screener_doc_{state['count'] + 1}.pdf"
-          file_path = os.path.join(download_dir, file_name)
-          with open(file_path, "wb") as f:
-            f.write(doc_response.content)
-          state["count"] += 1
-          state["urls"].add(href)
-          time.sleep(1)
-          return True
-      except Exception as e:
-        if status_log:
-          status_log.write(f"  -> Skipped {text}: Download error - {e}")
-
-      return False
-
-    ar_count, tr_count, ppt_count = 0, 0, 0
-
-    for t, h in ars:
-      if ar_count >= 1:
-        break
-      if try_download("Annual Report", h):
-        ar_count += 1
-
-    for t, h in transcripts:
-      if tr_count >= 4:
-        break
-      if try_download("Transcript", h):
-        tr_count += 1
-
-    for t, h in ppts:
-      if ppt_count >= 4:
-        break
-      if try_download("PPT", h):
-        ppt_count += 1
-
-    pdf_files = glob.glob(f"{download_dir}/*.pdf")
-    if not pdf_files:
-      if status_log:
-        status_log.error(
-            f"❌ **{clean_ticker}:** Could not download any valid PDF reports."
-        )
-      return None
-
-    if status_log:
-      status_log.write(
-          f"🤖 **{clean_ticker}:** Uploading {len(pdf_files)} PDFs to Gemini"
-          " 2.5 Flash..."
-      )
-
-    uploaded_files = []
-    for file_path in pdf_files:
-      uploaded_file = client.files.upload(file=file_path)
-      uploaded_files.append(uploaded_file)
-
-    for f in uploaded_files:
-      while True:
-        file_info = client.files.get(name=f.name)
-        if "ACTIVE" in str(file_info.state).upper():
-          break
-        time.sleep(3)
-
-    if status_log:
-      status_log.write(f"Analyzing **{clean_ticker}** fundamentals...")
-
-    prompt = """
-You are an uncompromising, strict Mark Minervini-style fundamental analyst. Your sole objective is to analyze the provided Annual Report, Investor Presentations, and Earnings Call Transcripts to determine if the company meets Minervini's "Superperformance" criteria.
-
-### DATA & GROUND TRUTH RULES
-1. Rely ONLY on the uploaded documents and consider ONLY consolidated financial figures.
-2. Do not speculate, calculate unstated assumptions, or fill gaps from external knowledge.
-3. If any metric or fact is missing from the document, write explicitly: "Not available in uploaded documents."
-
-### STRICT CATALYST & VERDICT RULES (CRITICAL)
-- **NO CATALYST = NO PASS:** Even if YoY earnings and sales growth are >20%, you CANNOT award a 🟢 PASS if there is no explicit, forward-looking fundamental catalyst identified in the transcripts or presentations. If growth is strong but no catalyst/trigger is found, the maximum grade is 🟡 WATCHLIST.
-- **SECTOR-ADAPTIVE CATALYST SEARCH:** Automatically adjust the catalyst criteria based on the company's business model:
-  - *Manufacturing / Auto / Infra:* CapEx completion, plant commissioning, order book growth, raw material margin relief.
-  - *Financials / Banks / NBFCs:* Credit/loan growth acceleration, Net Interest Margin (NIM) expansion, sharp drops in NPAs, strong AUM growth.
-  - *Tech / IT / SaaS:* Large deal wins (TCV), client additions, utilization/margin recovery, geographic expansion.
-  - *Consumer / FMCG / Retail:* Volume growth acceleration (not just price-led), Same-Store Sales Growth (SSSG), store count expansion.
-  - *Pharma / Healthcare:* US FDA approvals, new launches, hospital bed capacity additions, ARPOB growth.
-  - *Platforms / Exchanges:* Market share expansion, active user growth, transaction volume surges.
-- **FORWARD-LOOKING vs. BACKWARD-LOOKING:** Prioritize forward-looking triggers (management guidance, upcoming launches, margin expansions, pipeline) found in recent Earnings Calls over historical reasons in old reports.
-- **Base Verdict ONLY on Available Data:** Do not penalize missing data points, but strictly enforce the presence of a tangible growth catalyst.
-
----
-
-### OUTPUT FORMAT & VISUAL HIERARCHY
-
-#### 1. HEADER & INSTANT VERDICT
-Provide the company name and an instant decision verdict:
-- **MINERVINI FUNDAMENTAL VERDICT:** [Insert 🟢 PASS / 🟡 WATCHLIST / 🔴 FAIL]
-- **🚀 PRIMARY CATALYST / BREAKOUT TRIGGER:** [State in 1-2 BOLD sentences the exact forward-looking trigger driving this stock (e.g., "New plant going live in Q3 to double capacity" OR "Credit growth accelerated to 28% with NIM expansion" OR "Large $50M TCV deal win securing H2 revenue"). If NONE found, state: "⚠️ NO CLEAR FORWARD CATALYST DETECTED"].
-- **VERDICT LOGIC:** [Provide a 1-2 sentence justification for the overall verdict].
-  - 🟢 **PASS:** Available YoY Sales & EPS > 20%, positive Code 33 acceleration, AND a clear, validated forward catalyst.
-  - 🟡 **WATCHLIST:** Strong growth but NO clear catalyst, a minor confirmed red flag, OR a Catalyst Override applied.
-  - 🔴 **FAIL:** Confirmed Sales/EPS growth < 20%, decelerating growth, or major red flags without a massive catalyst.
-
-#### 2. SUPERPERFORMANCE SCORECARD
-Present this quick-scan summary table (Use "N/A - Not in Document" if missing):
-
-| Core Pillar | Status | Key Metric / Reason |
-| :--- | :---: | :--- |
-| **1. Growth Velocity (Code 33)** | [🟢 / 🟡 / 🔴 / ⚪ N/A] | [1-line summary of EPS, Sales, and Net Margin acceleration] |
-| **2. Forward Catalyst & Triggers** | [🟢 / 🟡 / 🔴 / ⚪ N/A] | [1-line summary of sector-specific catalyst from Concalls/PPTs] |
-| **3. Earnings Quality & Red Flags**| [🟢 / 🟡 / 🔴 / ⚪ N/A] | [1-line summary of receivables, inventory, or cash flow] |
-
-#### 3. BOTTOM LINE UP FRONT (BLUF)
-- **Top Fundamental Strengths (from available data):**
-  - [Bullet 1]
-  - [Bullet 2]
-  - [Bullet 3]
-- **Top Red Flags / Concerns (from available data):**
-  - [Bullet 1]
-  - [Bullet 2]
-  - [Bullet 3]
-
----
-
-### DETAILED ANALYSIS BREAKDOWN
-
-Use visual status icons at the start of each bullet:
-- 🟢 Clear Pass
-- 🔴 Fail/Red Flag
-- 🟡 Mixed / Catalyst Override Applied
-- ⚠️ Warning/Watch
-- ⚪ Not available in document
-
-Bold ONLY key metrics, figures, and definitive "Yes/No" answers.
-
-#### SECTION 1: Growth Velocity (The Engine)
-* **Latest Quarter YoY Growth:** Is EPS and Sales growth **>20%**? State exact % values.
-* **Code 33 Acceleration:** Are EPS, Sales, AND Net Margins accelerating compared to prior 2-3 quarters or same quarter last year? (**Yes / No / Data Missing**)
-* **Margin Dynamics:** Are Net and Operating Profit Margins expanding or contracting YoY?
-* **Management Guidance:** Did management raise or confirm strong future outlook/guidance in recent Earnings Calls?
-* **Annual Track Record:** Is there a 3-5 year history of annual EPS growth? Are current FY estimates projected to reach a **new all-time high**?
-
-#### SECTION 2: Sector-Adaptive Catalyst & Forward Triggers (Concall & PPT Extraction)
-* **Primary Sector Catalyst:** Identify the primary growth driver based on the industry (e.g., CapEx/Order Book for Industrial; NIM/Credit growth for Banks; Deal wins/Margins for IT; Volume/SSSG/Stores for Retail; FDA/Launches for Pharma).
-* **Catalyst Magnitude & Timeline:** Is this a game-changing trigger taking effect in the next 1-4 quarters? State exact management commentary or guidance.
-* **Institutional Sponsorship (FII/DII Trend):** Did FII, DII, or Mutual Fund shareholding increase in the most recent quarter compared to the previous quarter? (**Yes / No / Data Missing**)
-* **Competitive Advantage & Scalability:** Is the growth model scalable without excessive capital burn?
-* **Market Leadership:** Is the company a market leader (#1 or #2 in its niche) or gaining market share?
-
-#### SECTION 3: Quality of Earnings & Red Flags
-* ⚠️ **Inventory vs. Sales Growth:** Is inventory (especially finished goods) growing faster than sales? State exact growth rate comparison if present (Mark N/A for Banks/Services).
-* ⚠️ **Receivables vs. Sales Growth:** Are accounts receivable growing faster than sales?
-* **Source of Profit:** Is EPS driven by **Top Line revenue**, or by cost-cutting, tax benefits, or "Other Income"?
-* **Tax Rate Distortion:** Was there an artificial boost to EPS from a lower effective tax rate?
-* **Cash Flow vs. Earnings:** Has Operating Cash Flow (CFO) diverged negatively from Net Profit over the last 3 years?
-* **Debt Load & Solvency:** What is the total debt load (or NPA profile for financials), and can cash flows easily service it?
-"""
-
-    try:
-      response = client.models.generate_content(
-          model="gemini-2.5-flash",
-          contents=[prompt] + uploaded_files,
-          config={"service_tier": "flex", "http_options": {"timeout": 900000}},
-      )
-    except Exception as e:
-      if "tokens allowed" in str(e) or "400" in str(e):
-        if status_log:
-          status_log.write(
-              f"   -> OVERLOAD: {clean_ticker} documents are too massive."
-              " Retrying with top 4 most recent files..."
-          )
-        reduced_files = uploaded_files[:4]
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[prompt] + reduced_files,
-            config={"service_tier": "flex", "http_options": {"timeout": 900000}},
-        )
-      else:
-        raise e
-
-    analysis_text = response.text
-
-    verdict_line = ""
-    for line in analysis_text.upper().split("\n"):
-      if "MINERVINI FUNDAMENTAL VERDICT:" in line or "VERDICT:" in line:
-        verdict_line = line
-        break
-
-    if "PASS" in verdict_line or "🟢" in verdict_line:
-      verdict = "PASS 🟢"
-    elif "WATCHLIST" in verdict_line or "🟡" in verdict_line:
-      verdict = "WATCHLIST 🟡"
-    elif "FAIL" in verdict_line or "🔴" in verdict_line:
-      verdict = "FAIL 🔴"
-    else:
-      verdict = "Review Needed"
-
-    today_str = time.strftime("%Y-%m-%d")
-    report_entry = {
-        "ticker": clean_ticker,
-        "verdict": verdict,
-        "date": today_str,
-        "report_md": analysis_text,
-    }
-
-    if reports_store is not None:
-      reports_store[clean_ticker] = report_entry
-      save_fundamental_reports(reports_store)
-    else:
-      st.session_state.fundamental_reports[clean_ticker] = report_entry
-      save_fundamental_reports(st.session_state.fundamental_reports)
-
-    if status_log:
-      status_log.write(
-          f"✅ **{clean_ticker}:** Analysis complete! Verdict ->"
-          f" **{verdict}** (Saved to Gist)"
-      )
-
-    if email_addr and email_pass:
-      try:
-        from email.mime.multipart import MIMEMultipart
-        from email.mime.text import MIMEText
-
-        html_text = markdown.markdown(analysis_text, extensions=["tables"])
-        subject = f"{clean_ticker} - {verdict}"
-
-        msg = MIMEMultipart("alternative")
-        msg["From"] = email_addr
-        msg["To"] = email_addr
-        msg["Subject"] = subject
-
-        part1 = MIMEText(analysis_text, "plain")
-        part2 = MIMEText(html_text, "html")
-        msg.attach(part1)
-        msg.attach(part2)
-
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(email_addr, email_pass)
-        server.send_message(msg)
-        server.quit()
-        if status_log:
-          status_log.write(f"📧 Email report delivered for {clean_ticker}.")
-      except Exception as mail_err:
-        if status_log:
-          status_log.write(f"⚠️ Email dispatch warning: {mail_err}")
-
-    return report_entry
-
-  except Exception as e:
-    if status_log:
-      status_log.error(f"❌ **{clean_ticker}:** Analysis failed -> {e}")
-    return None
-
-
-@st.dialog("🧠 Minervini Fundamental AI Analyst", width="large")
-def show_fundamental_modal(ticker_symbol):
-  clean_sym = (
-      ticker_symbol.split(":")[-1].strip().upper()
-      if ":" in str(ticker_symbol)
-      else str(ticker_symbol).strip().upper()
-  )
-  rep = st.session_state.fundamental_reports.get(clean_sym)
-
-  if not rep:
-    st.info(
-        f"No stored report for **{clean_sym}**. Check its row in the table"
-        " below and click 'Analyze Selected'!"
-    )
-  else:
-    st.subheader(f"📊 {clean_sym} — {rep.get('verdict', 'N/A')}")
-    st.caption(
-        f"📅 Generated On: **{rep.get('date', 'N/A')}** | 💡 Zero tokens"
-        " spent on load"
-    )
-    st.markdown("---")
-    st.markdown(rep.get("report_md", ""))
-    st.markdown("---")
-
-    col_pdf, col_re = st.columns([1, 1])
-
-    with col_pdf:
-      pdf_bytes = create_pdf_bytes(clean_sym, rep.get("report_md", ""))
-      st.download_button(
-          label=f"📥 Download {clean_sym} Report (PDF)",
-          data=pdf_bytes,
-          file_name=f"{clean_sym}_Minervini_Fundamental_Report.pdf",
-          mime="application/pdf",
-          use_container_width=True,
-          type="primary",
-      )
-
-    with col_re:
-      if st.button(
-          "🔄 Re-Analyze & Overwrite (Quarterly Refresh)",
-          type="secondary",
-          use_container_width=True,
-      ):
-        with st.spinner(
-            f"📡 Fetching latest Screener.in PDFs & replacing {clean_sym}"
-            " report..."
-        ):
-          updated_rep = run_gemini_fundamental_analysis(
-              clean_sym, st.session_state.fundamental_reports
-          )
-          if updated_rep:
-            st.success("✅ Old report replaced with latest quarterly data!")
-            st.rerun()
-
-
-# ==========================================
-# GEMINI AI SITUATIONAL AWARENESS ENGINE
-# ==========================================
-def run_gemini_market_awareness(
-    df_mm, df_heat, df_rot, scan_summary_dict=None, status_log=None
-):
-  gemini_key = st.secrets.get("GEMINI_API_KEY", "")
-  if not gemini_key:
-    if status_log:
-      status_log.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets!")
-    return None
-
-  client = genai.Client(api_key=gemini_key)
-
-  mm_text = "No Market Monitor Data"
-  if not df_mm.empty:
-    mm_slice = df_mm.head(10).to_string(index=False)
-    mm_text = f"NSE Market Monitor (Last 10 Trading Days):\n{mm_slice}"
-
-  heat_text = "No Sector Heatmap Data"
-  if not df_heat.empty:
-    heat_slice = df_heat.to_string(index=False)
-    heat_text = f"27-Sector CAN SLIM RS Heatmap & Rank Velocities:\n{heat_slice}"
-
-  rot_text = "No Rotation Tracker Data"
-  if not df_rot.empty:
-    rot_slice = df_rot.head(10).to_string(index=False)
-    rot_text = (
-        "65-Day Historical Sector RS Ranks (Last 10 Days Trend):\n"
-        f" {rot_slice}"
-    )
-
-  scan_text = "No Active Screener Scan Summary Available"
-  if scan_summary_dict:
-    sec_str = json.dumps(
-        scan_summary_dict.get("sectors", {}), indent=2
-    )
-    ind_str = json.dumps(
-        scan_summary_dict.get("industries", {}), indent=2
-    )
-    scan_text = (
-        f"Active Screener Scan Leadership Breakdown:\n- Top Sectors passing"
-        f" filters:\n{sec_str}\n- Top Basic Industries passing"
-        f" filters:\n{ind_str}"
-    )
-
-  prompt = f"""
-You are a Senior Institutional Market Strategist and Mark Minervini / Stan Weinstein Market Regime Specialist for Indian Equities (NSE/BSE).
-
-Your sole objective is to analyze the provided multi-day market breadth tables, sector relative strength heatmaps, 65-day rotation rank trends, and active CAN SLIM screener setup concentrations to produce an uncompromising, actionable **Daily Market & Sector Situational Awareness Briefing**.
-
----
-
-### QUANTITATIVE DATA INPUTS:
-
-{mm_text}
-
----
-
-{heat_text}
-
----
-
-{rot_text}
-
----
-
-{scan_text}
-
----
-
-### MANDATORY REPORT TEMPLATE & STRUCTURAL REQUIREMENTS:
-
-Generate the report following this exact markdown template structure without skipping any section:
-
-# 🏥 DAILY MARKET & SECTOR SITUATIONAL AWARENESS BRIEFING
-
-#### 1. EXECUTIVE SUMMARY & MARKET REGIME
-- **CURRENT MARKET REGIME:** [Select ONE: 🟢 CONFIRMED UPTREND / 🟡 POWERED UPTREND (CAUTION) / 🟠 RANGEBOUND / CHOPPY / 🔴 MARKET UNDER PRESSURE / BEARISH REVERSAL]
-- **SETUP SUITABILITY MATRIX:**
-  - 🚀 **Momentum Breakout Setups:** [HIGHLY CONDUCTIVE / SELECTIVE (HIGH QUALITY ONLY) / AVOID]
-  - 📉 **Pullback / Re-test Setups:** [HIGHLY CONDUCTIVE / SELECTIVE / AVOID]
-  - 🔄 **Consolidation / Base Setups:** [HIGHLY CONDUCTIVE / SELECTIVE / AVOID]
-- **OVERALL MARKET STATE SUMMARY:** [3-4 sentences synthesizing price action, breadth thrusts, A/D ratio, and % of stocks above key moving averages over the past 5-10 days].
-
----
-
-#### 2. MARKET BREADTH & HEALTH SYNTHESIS
-- **Trend & Moving Average Participation:** Analyze the trend in stocks >20 EMA, >50 SMA, and >200 SMA.
-- **Thrust & Volume Expansion:** Interpret the 5-Day & 10-Day Thrust Ratios, A/D Ratio, and Volume Breadth.
-- **Expansion vs. Contraction:** Evaluate 52W Highs vs. 52W Lows and 4% Up vs. Down movers over the past week.
-
----
-
-#### 3. SECTOR MOMENTUM & ROTATION RADAR
-- 🟢 **LEADERSHIP SECTORS (Top Focus for Long Setups):** Detail the top 3-5 sectors ranking #1-5 with positive rank velocity and RS > benchmark.
-- 🚀 **EMERGING / ACCELERATING SECTORS:** Detail sectors jumping ranks rapidly in 5D/10D/21D rank velocity.
-- ⚠️ **FADING / WEAKENING SECTORS:** Detail sectors dropping in relative strength or breaking below 50 SMA.
-- 🔴 **AVOID / BEARISH SECTORS:** Bottom ranked sectors or sectors showing sharp negative rank velocity.
-
----
-
-#### 4. ACTIVE SCREENER SCAN CLUSTER ANALYSIS
-- **Sector Concentration:** Analyze where the highest percentage of passing stocks originate based on the scan summary data.
-- **Industry Sub-Clusters:** Identify specific basic industries showing stock setup clusters (e.g., Industrial Manufacturing, Capital Goods, Pharma).
-
----
-
-#### 5. ACTIONABLE NEXT-DAY EXECUTION PLAN
-- 🛡️ **Allowed Risk Per Trade:** [State exact equity risk rule, e.g., 0.5% - 0.75% per trade].
-- 💰 **Maximum Portfolio Deployment / Cash Buffer:** [State cash allocation rule, e.g., 80%-100% deployed vs 30% cash buffer].
-- 🎯 **Primary Focus Sectors & Industries for Tomorrow:** [List exact 2-3 sectors and basic industries to screen for buys].
-- 🚨 **Key Invalidation Levels & Danger Triggers:** [State exact breadth or Nifty 500 thresholds that would signal stopping new buys].
-"""
-
-  try:
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[prompt],
-        config={"service_tier": "flex", "http_options": {"timeout": 900000}},
-    )
-    briefing_text = response.text
-    today_str = time.strftime("%Y-%m-%d")
-
-    entry = {
-        "date": today_str,
-        "briefing_md": briefing_text,
-    }
-
-    st.session_state.market_briefings[today_str] = entry
-    save_market_briefings(st.session_state.market_briefings)
-
-    if status_log:
-      status_log.write(
-          f"✅ **Market Briefing Generated for {today_str}** (Saved to Gist)"
-      )
-
-    return entry
-  except Exception as e:
-    if status_log:
-      status_log.error(f"❌ Failed to generate Market Briefing -> {e}")
-    return None
-
-
-# ==========================================
-# 0B. AUTHENTICATED EXCEL LOADER
-# ==========================================
-def fetch_excel_file(filename):
-  if os.path.exists(filename):
-    return filename
-
-  headers_list = []
-  if GITHUB_TOKEN:
-    headers_list.append({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-    })
-    headers_list.append({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Authorization": f"token {GITHUB_TOKEN}",
-    })
-  headers_list.append({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-
-  repos = [
-      "chethanshivaraju94-netizen/nse-market-monitor",
-      "chethanshivaraju94-netizen/India-equities-screener",
-  ]
-  branches = ["main", "master"]
-
-  for repo in repos:
-    for branch in branches:
-      url = f"https://raw.githubusercontent.com/{repo}/{branch}/{filename}"
-      for headers in headers_list:
-        try:
-          res = requests.get(url, headers=headers, timeout=10)
-          if res.status_code == 200:
-            return io.BytesIO(res.content)
-        except Exception:
-          pass
-
-  return None
-
-
-@st.cache_data(ttl=43200, show_spinner="📡 Synchronizing Daily Circuit Price Bands...")
-def get_nse_circuit_bands():
-  symbol_to_band = {}
-  try:
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    session = requests.Session()
-    session.headers.update(headers)
-    session.get("https://www.nseindia.com", timeout=5)
-    url = (
-        "https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O"
-    )
-    res = session.get(url, timeout=6)
-    if res.status_code == 200:
-      data = res.json()
-      for row in data.get("data", []):
-        sym = str(row.get("symbol", "")).strip().upper()
-        band_val = str(row.get("priceBand", "")).strip()
-        if sym and band_val:
-          symbol_to_band[sym] = band_val
-  except Exception:
-    pass
-
-  if not symbol_to_band:
-    try:
-      cdn_url = (
-          "https://raw.githubusercontent.com/datasets/nse-stocks/master/data/stock_metadata.json"
-      )
-      res_cdn = requests.get(cdn_url, timeout=5)
-      if res_cdn.status_code == 200:
-        for item in res_cdn.json():
-          sym = str(item.get("symbol", "")).strip().upper()
-          band_val = str(item.get("band", "")).strip()
-          if sym and band_val:
-            symbol_to_band[sym] = band_val
-    except Exception:
-      pass
-
-  return symbol_to_band
-
-
-@st.cache_data(
-    ttl=3600, show_spinner="📡 Fetching latest Market Health & Sector tables..."
-)
-def load_market_monitor_data():
-  file_source = fetch_excel_file("NSE_Market_Monitor.xlsx")
-  if file_source is None:
-    return pd.DataFrame()
-
-  try:
-    df = pd.read_excel(file_source, sheet_name=0)
-    if "Date" in df.columns:
-      df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime(
-          "%Y-%m-%d"
-      )
-    return df
-  except Exception as e:
-    st.error(f"Could not parse Market Monitor file: {e}")
-    return pd.DataFrame()
-
-
-@st.cache_data(
-    ttl=3600,
-    show_spinner="📡 Fetching Sector Rotation & Heatmap tables...",
-)
-def load_sector_monitor_data():
-  file_source = fetch_excel_file("NSE_Sector_Monitor.xlsx")
-  if file_source is None:
-    return pd.DataFrame(), pd.DataFrame()
-
-  try:
-    xls = pd.ExcelFile(file_source)
-    df_heat = (
-        pd.read_excel(xls, sheet_name="Heatmap")
-        if "Heatmap" in xls.sheet_names
-        else pd.DataFrame()
-    )
-    df_rot = (
-        pd.read_excel(xls, sheet_name="Rotation Tracker")
-        if "Rotation Tracker" in xls.sheet_names
-        else pd.DataFrame()
-    )
-    if "Date" in df_rot.columns:
-      df_rot["Date"] = pd.to_datetime(
-          df_rot["Date"], errors="coerce"
-      ).dt.strftime("%Y-%m-%d")
-    return df_heat, df_rot
-  except Exception as e:
-    st.error(f"Could not parse Sector Monitor file: {e}")
-    return pd.DataFrame(), pd.DataFrame()
-
-
-# ==========================================
-# 0C. EXCEL COLOR SCALE GRADIENT ENGINE FOR TAB 4
-# ==========================================
-def color_scale_3pt(
-    val,
-    v_min,
-    v_mid,
-    v_max,
-    c_min=(248, 105, 107),
-    c_mid=(255, 255, 255),
-    c_max=(99, 190, 123),
-):
-  if pd.isna(val) or val == "" or str(val).strip() == "":
-    return ""
-  try:
-    v = float(val)
-  except Exception:
-    return ""
-
-  if v <= v_min:
-    r, g, b = c_min
-  elif v >= v_max:
-    r, g, b = c_max
-  elif v < v_mid:
-    ratio = (v - v_min) / max((v_mid - v_min), 1e-6)
-    r = int(c_min[0] + (c_mid[0] - c_min[0]) * ratio)
-    g = int(c_min[1] + (c_mid[1] - c_min[1]) * ratio)
-    b = int(c_min[2] + (c_mid[2] - c_min[2]) * ratio)
-  else:
-    ratio = (v - v_mid) / max((v_max - v_mid), 1e-6)
-    r = int(c_mid[0] + (c_max[0] - c_mid[0]) * ratio)
-    g = int(c_mid[1] + (c_max[1] - c_mid[1]) * ratio)
-    b = int(c_mid[2] + (c_max[2] - c_mid[2]) * ratio)
-  return f"background-color: #{r:02X}{g:02X}{b:02X}; color: #000000;"
-
-
-def color_scale_2pt(
-    val, v_min, v_max, c_min=(255, 255, 255), c_max=(99, 190, 123)
-):
-  if pd.isna(val) or val == "" or str(val).strip() == "":
-    return ""
-  try:
-    v = float(val)
-  except Exception:
-    return ""
-
-  if v <= v_min:
-    r, g, b = c_min
-  elif v >= v_max:
-    r, g, b = c_max
-  else:
-    ratio = (v - v_min) / max((v_max - v_min), 1e-6)
-    r = int(c_min[0] + (c_max[0] - c_min[0]) * ratio)
-    g = int(c_min[1] + (c_max[1] - c_min[1]) * ratio)
-    b = int(c_min[2] + (c_max[2] - c_min[2]) * ratio)
-  return f"background-color: #{r:02X}{g:02X}{b:02X}; color: #000000;"
-
-
-def color_binary_badge(val):
-  v_str = str(val).strip().lower()
-  if v_str in ["yes", "up"]:
-    return "background-color: #63BE7B; color: #000000; font-weight: bold;"
-  elif v_str in ["no", "down"]:
-    return "background-color: #F8696B; color: #000000; font-weight: bold;"
-  return ""
-
-
-def safe_map(styler, func, subset=None):
-  if hasattr(styler, "map"):
-    return styler.map(func, subset=subset)
-  else:
-    return styler.applymap(func, subset=subset)
-
-
-def style_market_monitor(df):
-  styler = df.style
-  format_dict = {}
-  int_cols = [
-      "Up 4% Today",
-      "Down 4% Today",
-      "Advances",
-      "Declines",
-      "52W Highs",
-      "52W Lows",
-  ]
-  float_cols = [
-      "5 Day Ratio",
-      "10 Day Ratio",
-      "A/D Ratio",
-      "Volume Breadth",
-      "> 200 SMA (%)",
-      "> 50 SMA (%)",
-      "> 20 EMA (%)",
-      "> 10 EMA (%)",
-      "Nifty 500 Close",
-      "Nifty 500 Chg %",
-  ]
-  for col in int_cols:
-    if col in df.columns:
-      format_dict[col] = "{:.0f}"
-  for col in float_cols:
-    if col in df.columns:
-      format_dict[col] = "{:.2f}"
-  styler = styler.format(format_dict, na_rep="N/A")
-
-  for c in ["Up 4% Today", "Advances", "52W Highs"]:
-    if c in df.columns:
-      max_v = 750 if c == "Advances" else 200
-      styler = safe_map(
-          styler,
-          lambda v, mv=max_v: color_scale_2pt(
-              v, 0, mv, (255, 255, 255), (99, 190, 123)
-          ),
-          subset=[c],
-      )
-  for c in ["Down 4% Today", "Declines", "52W Lows"]:
-    if c in df.columns:
-      max_v = 750 if c == "Declines" else 200
-      styler = safe_map(
-          styler,
-          lambda v, mv=max_v: color_scale_2pt(
-              v, 0, mv, (255, 255, 255), (248, 105, 107)
-          ),
-          subset=[c],
-      )
-  for c in ["5 Day Ratio", "10 Day Ratio", "A/D Ratio", "Volume Breadth"]:
-    if c in df.columns:
-      styler = safe_map(
-          styler,
-          lambda v: color_scale_3pt(v, 0.5, 1.0, 2.0),
-          subset=[c],
-      )
-  for c in ["> 200 SMA (%)", "> 50 SMA (%)", "> 20 EMA (%)", "> 10 EMA (%)"]:
-    if c in df.columns:
-      styler = safe_map(
-          styler,
-          lambda v: color_scale_3pt(v, 0.0, 50.0, 100.0),
-          subset=[c],
-      )
-  if "Nifty 500 Chg %" in df.columns:
-    styler = safe_map(
-        styler,
-        lambda v: color_scale_3pt(v, -2.0, 0.0, 2.0),
-        subset=["Nifty 500 Chg %"],
-    )
-  try:
-    styler = styler.hide(axis="index")
-  except Exception:
-    pass
-  return styler
-
-
-def style_sector_heatmap(df):
-  styler = df.style
-  format_dict = {}
-  int_cols = ["65D RS Rank"]
-  vel_cols = [
-      "5D Rank Velocity",
-      "10D Rank Velocity",
-      "21D Rank Velocity",
-      "65D Rank Velocity",
-  ]
-  float_cols = [
-      "Close",
-      "% Chg",
-      "5D RS %",
-      "21D RS %",
-      "65D RS %",
-      "% Off RS High",
-  ]
-  for col in int_cols:
-    if col in df.columns:
-      format_dict[col] = "{:.0f}"
-  for col in vel_cols:
-    if col in df.columns:
-      format_dict[col] = "{:+.0f}"
-  for col in float_cols:
-    if col in df.columns:
-      format_dict[col] = "{:.2f}"
-  styler = styler.format(format_dict, na_rep="N/A")
-
-  for c in vel_cols:
-    if c in df.columns:
-      styler = safe_map(
-          styler,
-          lambda v: color_scale_3pt(v, -10, 0, 10),
-          subset=[c],
-      )
-  rs_cols = ["5D RS %", "21D RS %", "65D RS %"]
-  for c in rs_cols:
-    if c in df.columns:
-      styler = safe_map(
-          styler,
-          lambda v: color_scale_3pt(v, -10, 0, 10),
-          subset=[c],
-      )
-  if "% Off RS High" in df.columns:
-    styler = safe_map(
-        styler,
-        lambda v: color_scale_3pt(v, -15.0, -5.0, 0.0),
-        subset=["% Off RS High"],
-    )
-  bin_cols = [
-      "RS Trend (>50 SMA)",
-      "> 10 EMA",
-      "> 20 EMA",
-      "> 50 SMA",
-      "> 200 SMA",
-  ]
-  for c in bin_cols:
-    if c in df.columns:
-      styler = safe_map(styler, color_binary_badge, subset=[c])
-  try:
-    styler = styler.hide(axis="index")
-  except Exception:
-    pass
-  return styler
-
-
-def style_rotation_tracker(df):
-  styler = df.style
-  sec_cols = [c for c in df.columns if c != "Date"]
-  format_dict = {c: "{:.0f}" for c in sec_cols}
-  styler = styler.format(format_dict, na_rep="N/A")
-
-  num_sec = max(len(sec_cols), 1)
-  mid_rank = max((num_sec // 2) + 1, 1)
-  for c in sec_cols:
-    styler = safe_map(
-        styler,
-        lambda v, ms=num_sec, mr=mid_rank: color_scale_3pt(
-            v,
-            1,
-            mr,
-            ms,
-            c_min=(99, 190, 123),
-            c_mid=(255, 255, 255),
-            c_max=(248, 105, 107),
-        ),
-        subset=[c],
-    )
-  try:
-    styler = styler.hide(axis="index")
-  except Exception:
-    pass
-  return styler
-
-
-# ==========================================
-# VISUAL WATCHLIST COLOR DOT HELPER
-# ==========================================
-def get_wl_dots(symbol, watchlists_dict):
-  bare_sym = (
-      symbol.split(":")[-1].strip().upper()
-      if ":" in str(symbol)
-      else str(symbol).strip().upper()
-  )
-  dots = []
-  for wl_name, sym_list in watchlists_dict.items():
-    wl_bare_symbols = [s.split(":")[-1].strip().upper() for s in sym_list]
-    if bare_sym in wl_bare_symbols:
-      name_lower = wl_name.lower()
-      if "post breakout" in name_lower or "breakout" in name_lower:
-        dot = "🔵"
-      elif "weekly" in name_lower:
-        dot = "🟡"
-      elif "focus" in name_lower:
-        dot = "🟢"
-      elif "scan bulk" in name_lower or "bulk" in name_lower:
-        dot = "🟠"
-      elif "sold" in name_lower:
-        dot = "🔴"
-      else:
-        dot = "🟣"
-      if dot not in dots:
-        dots.append(dot)
-  return "".join(dots)
-
-
-# ==========================================
-# VISUAL CIRCUIT STOCK BADGE HELPER
-# ==========================================
-def is_circuit_stock_badge(row, bands_map):
-  sym = str(row.get("name", "")).replace("🚨", "").strip().upper()
-  band_val = bands_map.get(sym, "")
-  if band_val in ["2", "5", "10"]:
-    return True
-
-  high = pd.to_numeric(row.get("high"), errors="coerce")
-  low = pd.to_numeric(row.get("low"), errors="coerce")
-  open_p = pd.to_numeric(row.get("open"), errors="coerce")
-  close_p = pd.to_numeric(row.get("close"), errors="coerce")
-  change_p = abs(pd.to_numeric(row.get("change"), errors="coerce"))
-
-  if (
-      pd.notna(high)
-      and pd.notna(low)
-      and high == low
-      and high > 0
-      and pd.notna(change_p)
-      and change_p > 1.5
-  ):
-    return True
-
-  is_locked = (
-      pd.notna(close_p)
-      and pd.notna(high)
-      and pd.notna(low)
-      and (close_p == high or close_p == low)
-      and (high != open_p)
-  )
-  if is_locked and (
-      (1.97 <= change_p <= 2.00)
-      or (4.97 <= change_p <= 5.00)
-      or (9.97 <= change_p <= 10.00)
-  ):
-    return True
-
-  return False
-
-
-# ==========================================
-# 100% LEFT-ALIGNED & ZERO-TRUNCATION TABLE CONFIG
-# ==========================================
-def get_left_aligned_column_config(col_list):
-  cfg = {}
-  for col in col_list:
-    if col == "TV_Link":
-      cfg[col] = st.column_config.LinkColumn(
-          "TradingView", display_text="↗️ Chart", alignment="left", width=85
-      )
-    elif col == "Screener_Link":
-      cfg[col] = st.column_config.LinkColumn(
-          "Screener.in", display_text="↗️ Screener", alignment="left", width=95
-      )
-    elif col in ["S.No.", "S.No._num"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=75)
-    elif col in ["TV_Symbol", "Ticker"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=135)
-    elif col == "name":
-      cfg[col] = st.column_config.Column(col, alignment="left", width=140)
-    elif col == "RS Rating":
-      cfg[col] = st.column_config.NumberColumn(
-          "RS Rating", alignment="left", format="%d", width=95
-      )
-    elif col in ["Date", "Sector", "Date Bought", "Date Sold", "Status"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=130)
-    elif col == "Fundamental":
-      cfg[col] = st.column_config.Column(col, alignment="left", width=155)
-    elif "Rank Velocity" in col:
-      cfg[col] = st.column_config.NumberColumn(
-          col, alignment="left", format="%+d", width=125
-      )
-    elif col in ["Sector", "Basic Industry"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=220)
-    elif col == "Industry":
-      cfg[col] = st.column_config.Column(col, alignment="left", width=250)
-    elif col in ["Close", "Change %", "ADR %"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=85)
-    elif col in ["EPS Q YoY %", "Sales Q YoY %", "IPO Date"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=110)
-    elif "Perf %" in col or "EMA" in col or "SMA" in col:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=85)
-    elif col in [
-        "Market Cap (₹ Cr)",
-        "Buy Price (₹)",
-        "Initial SL (₹)",
-        "Current / Sold Price (₹)",
-        "Capital Invested (₹)",
-        "Current Value (₹)",
-        "Booked Value (₹)",
-        "Unrealised Value (₹)",
-        "Gain / Loss (₹)",
-        "Realised Gains (₹)",
-        "Total Return (₹)",
-    ]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=140)
-    elif col in ["Abs Return %", "Allocation %", "Realized R", "Win Rate %", "Day"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=110)
-    elif col in ["Stocks Passed", "Trades", "Wins", "ISO Week"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=115)
-    elif col == "% Share":
-      cfg[col] = st.column_config.Column(col, alignment="left", width=90)
-    elif col in ["% of Sector Total", "% of Industry Total"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=145)
-    else:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=110)
-  return cfg
-
-
-# ==========================================
-# REORDER CALLBACK FUNCTIONS
-# ==========================================
-def cb_move_top(wl_name, sym):
-  lst = st.session_state.watchlists.get(wl_name, [])
-  if sym in lst:
-    lst.remove(sym)
-    lst.insert(0, sym)
-    save_watchlists(st.session_state.watchlists)
-
-
-def cb_move_up(wl_name, sym):
-  lst = st.session_state.watchlists.get(wl_name, [])
-  if sym in lst:
-    idx = lst.index(sym)
-    if idx > 0:
-      lst.pop(idx)
-      lst.insert(idx - 1, sym)
-      save_watchlists(st.session_state.watchlists)
-
-
-def cb_move_down(wl_name, sym):
-  lst = st.session_state.watchlists.get(wl_name, [])
-  if sym in lst:
-    idx = lst.index(sym)
-    if idx < len(lst) - 1:
-      lst.pop(idx)
-      lst.insert(idx + 1, sym)
-      save_watchlists(st.session_state.watchlists)
-
-
-def cb_move_bottom(wl_name, sym):
-  lst = st.session_state.watchlists.get(wl_name, [])
-  if sym in lst:
-    lst.remove(sym)
-    lst.append(sym)
-    save_watchlists(st.session_state.watchlists)
-
-
-def cb_jump_rank(wl_name, sym, target_rank):
-  lst = st.session_state.watchlists.get(wl_name, [])
-  if sym in lst:
-    lst.remove(sym)
-    new_idx = max(0, min(len(lst), target_rank - 1))
-    lst.insert(new_idx, sym)
-    save_watchlists(st.session_state.watchlists)
-
-
 st.title("📈 India Equities Screener & Watchlist Studio")
 st.markdown(
     "Professional **CAN SLIM Screener**, **Hierarchical Sector Rotation**, "
@@ -1822,404 +7,14 @@ st.markdown(
 # ==========================================
 # 1. OFFICIAL 22 SECTORS & 59 INDUSTRIES
 # ==========================================
-INDIAN_SECTOR_HIERARCHY = {
-    "Automobile and Auto Components": [
-        "Automobiles",
-        "Auto Components & Ancillaries",
-        "Tyres & Rubber",
-    ],
-    "Capital Goods": [
-        "Aerospace & Defense",
-        "Electrical Equipment",
-        "Engineering Services",
-        "Industrial Manufacturing",
-        "Industrial Products",
-    ],
-    "Chemicals": ["Chemicals & Petrochemicals", "Fertilizers & Agrochemicals"],
-    "Construction": ["Civil Construction", "Infrastructure Developers"],
-    "Construction Materials": [
-        "Cement & Cement Products",
-        "Ceramics & Building Materials",
-    ],
-    "Consumer Durables": [
-        "Consumer Electronics & Appliances",
-        "Gems, Jewellery & Watches",
-        "Household & Personal Products",
-    ],
-    "Consumer Services": [
-        "Leisure Services",
-        "Restaurants & QSR",
-        "Retailing",
-        "Travel & Tourism",
-    ],
-    "Diversified": [
-        "Diversified Commercial Services",
-        "Diversified Industrials",
-    ],
-    "Fast Moving Consumer Goods": [
-        "Agricultural Food & Other Products",
-        "Beverages",
-        "Food Products",
-        "Personal Care",
-        "Tobacco Products",
-    ],
-    "Financial Services": [
-        "Asset Management",
-        "Banks",
-        "Capital Markets",
-        "Finance & NBFCs",
-        "Financial Technology (Fintech)",
-        "Insurance",
-    ],
-    "Forest Materials": ["Paper, Forest & Jute Products"],
-    "Healthcare": [
-        "Healthcare Research, Analytics & Technology",
-        "Healthcare Services",
-        "Medical Equipment & Supplies",
-        "Pharmaceuticals & Biotechnology",
-    ],
-    "Information Technology": [
-        "IT - Hardware",
-        "IT - Software & Consulting",
-        "IT - Services",
-    ],
-    "Media, Entertainment & Publication": [
-        "Broadcasting & Cable TV",
-        "Entertainment & Content",
-        "Print Media & Publishing",
-    ],
-    "Metals & Mining": [
-        "Ferrous Metals (Steel & Iron)",
-        "Non-Ferrous Metals",
-        "Minerals & Mining",
-    ],
-    "Oil, Gas & Consumable Fuels": [
-        "Consumable Fuels & Coal",
-        "Oil & Gas Exploration & Production",
-        "Petroleum Products & Refining",
-    ],
-    "Power": ["Power Generation", "Power Transmission & Distribution"],
-    "Realty": ["Real Estate Developers", "Real Estate Services"],
-    "Services": [
-        "Commercial & Professional Services",
-        "Logistics & Transportation Services",
-        "Port & Shipping Services",
-    ],
-    "Telecommunication": [
-        "Telecom - Equipment & Accessories",
-        "Telecom - Services",
-    ],
-    "Textiles": ["Garments & Apparels", "Textiles & Weaving"],
-    "Utilities": ["Gas Transmission & Utilities", "Water & Other Utilities"],
-}
-
-TV_TO_INDIAN_MAP = {
-    ("Commercial Services", "Financial Publishing/Services"): (
-        "Financial Services",
-        "Capital Markets",
-    ),
-    ("Commercial Services", "Miscellaneous Commercial Services"): (
-        "Services",
-        "Commercial & Professional Services",
-    ),
-    ("Commercial Services", "Personnel Services"): (
-        "Services",
-        "Commercial & Professional Services",
-    ),
-    ("Consumer Durables", "Automotive Aftermarket"): (
-        "Automobile and Auto Components",
-        "Auto Components & Ancillaries",
-    ),
-    ("Consumer Durables", "Electronics/Appliances"): (
-        "Consumer Durables",
-        "Consumer Electronics & Appliances",
-    ),
-    ("Consumer Durables", "Home Furnishings"): (
-        "Consumer Durables",
-        "Household & Personal Products",
-    ),
-    ("Consumer Durables", "Homebuilding"): ("Realty", "Real Estate Developers"),
-    ("Consumer Durables", "Motor Vehicles"): (
-        "Automobile and Auto Components",
-        "Automobiles",
-    ),
-    ("Consumer Durables", "Other Consumer Specialties"): (
-        "Consumer Durables",
-        "Gems, Jewellery & Watches",
-    ),
-    ("Consumer Non-Durables", "Apparel/Footwear"): (
-        "Textiles",
-        "Garments & Apparels",
-    ),
-    ("Consumer Non-Durables", "Beverages: Alcoholic"): (
-        "Fast Moving Consumer Goods",
-        "Beverages",
-    ),
-    ("Consumer Non-Durables", "Food: Major Diversified"): (
-        "Fast Moving Consumer Goods",
-        "Food Products",
-    ),
-    ("Consumer Non-Durables", "Food: Specialty/Candy"): (
-        "Fast Moving Consumer Goods",
-        "Food Products",
-    ),
-    ("Consumer Non-Durables", "Household/Personal Care"): (
-        "Fast Moving Consumer Goods",
-        "Personal Care",
-    ),
-    ("Consumer Services", "Broadcasting"): (
-        "Media, Entertainment & Publication",
-        "Broadcasting & Cable TV",
-    ),
-    ("Consumer Services", "Hotels/Resorts/Cruise lines"): (
-        "Consumer Services",
-        "Travel & Tourism",
-    ),
-    ("Consumer Services", "Movies/Entertainment"): (
-        "Media, Entertainment & Publication",
-        "Entertainment & Content",
-    ),
-    ("Consumer Services", "Publishing: Books/Magazines"): (
-        "Media, Entertainment & Publication",
-        "Print Media & Publishing",
-    ),
-    ("Consumer Services", "Restaurants"): (
-        "Consumer Services",
-        "Restaurants & QSR",
-    ),
-    ("Distribution Services", "Electronics Distributors"): (
-        "Capital Goods",
-        "Industrial Products",
-    ),
-    ("Distribution Services", "Medical Distributors"): (
-        "Healthcare",
-        "Medical Equipment & Supplies",
-    ),
-    ("Distribution Services", "Wholesale Distributors"): (
-        "Services",
-        "Commercial & Professional Services",
-    ),
-    ("Electronic Technology", "Aerospace & Defense"): (
-        "Capital Goods",
-        "Aerospace & Defense",
-    ),
-    ("Electronic Technology", "Computer Communications"): (
-        "Telecommunication",
-        "Telecom - Equipment & Accessories",
-    ),
-    ("Electronic Technology", "Computer Peripherals"): (
-        "Information Technology",
-        "IT - Hardware",
-    ),
-    ("Electronic Technology", "Electronic Components"): (
-        "Capital Goods",
-        "Electrical Equipment",
-    ),
-    ("Electronic Technology", "Electronic Equipment/Instruments"): (
-        "Capital Goods",
-        "Electrical Equipment",
-    ),
-    ("Electronic Technology", "Electronic Production Equipment"): (
-        "Capital Goods",
-        "Industrial Manufacturing",
-    ),
-    ("Electronic Technology", "Telecommunications Equipment"): (
-        "Telecommunication",
-        "Telecom - Equipment & Accessories",
-    ),
-    ("Energy Minerals", "Oil & Gas Production"): (
-        "Oil, Gas & Consumable Fuels",
-        "Oil & Gas Exploration & Production",
-    ),
-    ("Energy Minerals", "Oil Refining/Marketing"): (
-        "Oil, Gas & Consumable Fuels",
-        "Petroleum Products & Refining",
-    ),
-    ("Finance", "Finance/Rental/Leasing"): ("Financial Services", "Finance & NBFCs"),
-    ("Finance", "Financial Conglomerates"): (
-        "Financial Services",
-        "Finance & NBFCs",
-    ),
-    ("Finance", "Investment Banks/Brokers"): (
-        "Financial Services",
-        "Capital Markets",
-    ),
-    ("Finance", "Investment Managers"): (
-        "Financial Services",
-        "Asset Management",
-    ),
-    ("Finance", "Life/Health Insurance"): ("Financial Services", "Insurance"),
-    ("Finance", "Major Banks"): ("Financial Services", "Banks"),
-    ("Finance", "Multi-Line Insurance"): ("Financial Services", "Insurance"),
-    ("Finance", "Real Estate Development"): ("Realty", "Real Estate Developers"),
-    ("Finance", "Regional Banks"): ("Financial Services", "Banks"),
-    ("Health Services", "Hospital/Nursing Management"): (
-        "Healthcare",
-        "Healthcare Services",
-    ),
-    ("Health Services", "Medical/Nursing Services"): (
-        "Healthcare",
-        "Healthcare Services",
-    ),
-    ("Health Technology", "Biotechnology"): (
-        "Healthcare",
-        "Pharmaceuticals & Biotechnology",
-    ),
-    ("Health Technology", "Medical Specialties"): (
-        "Healthcare",
-        "Medical Equipment & Supplies",
-    ),
-    ("Health Technology", "Pharmaceuticals: Generic"): (
-        "Healthcare",
-        "Pharmaceuticals & Biotechnology",
-    ),
-    ("Health Technology", "Pharmaceuticals: Major"): (
-        "Healthcare",
-        "Pharmaceuticals & Biotechnology",
-    ),
-    ("Health Technology", "Pharmaceuticals: Other"): (
-        "Healthcare",
-        "Pharmaceuticals & Biotechnology",
-    ),
-    ("Industrial Services", "Contract Drilling"): (
-        "Oil, Gas & Consumable Fuels",
-        "Oil & Gas Exploration & Production",
-    ),
-    ("Industrial Services", "Engineering & Construction"): (
-        "Construction",
-        "Civil Construction",
-    ),
-    ("Industrial Services", "Oilfield Services/Equipment"): (
-        "Oil, Gas & Consumable Fuels",
-        "Oil & Gas Exploration & Production",
-    ),
-    ("Non-Energy Minerals", "Construction Materials"): (
-        "Construction Materials",
-        "Ceramics & Building Materials",
-    ),
-    ("Non-Energy Minerals", "Forest Products"): (
-        "Forest Materials",
-        "Paper, Forest & Jute Products",
-    ),
-    ("Non-Energy Minerals", "Other Metals/Minerals"): (
-        "Metals & Mining",
-        "Minerals & Mining",
-    ),
-    ("Non-Energy Minerals", "Steel"): (
-        "Metals & Mining",
-        "Ferrous Metals (Steel & Iron)",
-    ),
-    ("Process Industries", "Agricultural Commodities/Milling"): (
-        "Fast Moving Consumer Goods",
-        "Agricultural Food & Other Products",
-    ),
-    ("Process Industries", "Chemicals: Agricultural"): (
-        "Chemicals",
-        "Fertilizers & Agrochemicals",
-    ),
-    ("Process Industries", "Chemicals: Major Diversified"): (
-        "Chemicals",
-        "Chemicals & Petrochemicals",
-    ),
-    ("Process Industries", "Chemicals: Specialty"): (
-        "Chemicals",
-        "Chemicals & Petrochemicals",
-    ),
-    ("Process Industries", "Containers/Packaging"): (
-        "Capital Goods",
-        "Industrial Products",
-    ),
-    ("Process Industries", "Industrial Specialties"): (
-        "Capital Goods",
-        "Industrial Manufacturing",
-    ),
-    ("Process Industries", "Pulp & Paper"): (
-        "Forest Materials",
-        "Paper, Forest & Jute Products",
-    ),
-    ("Process Industries", "Textiles"): ("Textiles", "Textiles & Weaving"),
-    ("Producer Manufacturing", "Auto Parts: OEM"): (
-        "Automobile and Auto Components",
-        "Auto Components & Ancillaries",
-    ),
-    ("Producer Manufacturing", "Building Products"): (
-        "Construction Materials",
-        "Cement & Cement Products",
-    ),
-    ("Producer Manufacturing", "Electrical Products"): (
-        "Capital Goods",
-        "Electrical Equipment",
-    ),
-    ("Producer Manufacturing", "Industrial Machinery"): (
-        "Capital Goods",
-        "Industrial Manufacturing",
-    ),
-    ("Producer Manufacturing", "Metal Fabrication"): (
-        "Capital Goods",
-        "Industrial Manufacturing",
-    ),
-    ("Producer Manufacturing", "Miscellaneous Manufacturing"): (
-        "Capital Goods",
-        "Industrial Products",
-    ),
-    ("Producer Manufacturing", "Office Equipment/Supplies"): (
-        "Consumer Durables",
-        "Household & Personal Products",
-    ),
-    ("Producer Manufacturing", "Trucks/Construction/Farm Machinery"): (
-        "Automobile and Auto Components",
-        "Automobiles",
-    ),
-    ("Retail Trade", "Apparel/Footwear Retail"): (
-        "Consumer Services",
-        "Retailing",
-    ),
-    ("Retail Trade", "Electronics/Appliance Stores"): (
-        "Consumer Services",
-        "Retailing",
-    ),
-    ("Retail Trade", "Internet Retail"): ("Consumer Services", "Retailing"),
-    ("Retail Trade", "Specialty Stores"): ("Consumer Services", "Retailing"),
-    ("Technology Services", "Information Technology Services"): (
-        "Information Technology",
-        "IT - Services",
-    ),
-    ("Technology Services", "Internet Software/Services"): (
-        "Information Technology",
-        "IT - Software & Consulting",
-    ),
-    ("Technology Services", "Packaged Software"): (
-        "Information Technology",
-        "IT - Software & Consulting",
-    ),
-    ("Transportation", "Air Freight/Couriers"): (
-        "Services",
-        "Logistics & Transportation Services",
-    ),
-    ("Transportation", "Airlines"): ("Consumer Services", "Travel & Tourism"),
-    ("Transportation", "Marine Shipping"): (
-        "Services",
-        "Port & Shipping Services",
-    ),
-    ("Transportation", "Other Transportation"): (
-        "Services",
-        "Logistics & Transportation Services",
-    ),
-    ("Transportation", "Railroads"): (
-        "Services",
-        "Logistics & Transportation Services",
-    ),
-    ("Utilities", "Electric Utilities"): ("Power", "Power Generation"),
-    ("Utilities", "Gas Distributors"): ("Utilities", "Gas Transmission & Utilities"),
-}
-
+# [ !!! KEEP YOUR EXISTING INDIAN_SECTOR_HIERARCHY DICTIONARY HERE !!! ]
+# [ !!! KEEP YOUR EXISTING TV_TO_INDIAN_MAP DICTIONARY HERE !!! ]
 
 def map_to_indian_classification(tv_industry, tv_sector):
   mapped = TV_TO_INDIAN_MAP.get((tv_sector, tv_industry))
   if mapped:
     return mapped
   return "Diversified", "Diversified Commercial Services"
-
 
 def parse_chart_selection_multi(event):
   if event and isinstance(event, dict):
@@ -2228,7 +23,6 @@ def parse_chart_selection_multi(event):
     if points:
       return [p.get("label") for p in points if p.get("label")]
   return []
-
 
 def parse_table_selection_multi(event, df_source, col_name):
   if event and isinstance(event, dict):
@@ -2241,7 +35,6 @@ def parse_table_selection_multi(event, df_source, col_name):
           selected_vals.append(df_source.iloc[idx][col_name])
       return selected_vals
   return []
-
 
 def parse_pasted_tickers(raw_text):
   if not raw_text:
@@ -2259,7 +52,6 @@ def parse_pasted_tickers(raw_text):
       cleaned.append(t)
   return cleaned
 
-
 # ==========================================
 # MULTI-ALIAS COALESCING HELPER
 # ==========================================
@@ -2270,7 +62,6 @@ def coalesce_columns(df, col_list):
       s = pd.to_numeric(df[c], errors="coerce")
       res = res.fillna(s)
   return res
-
 
 # ==========================================
 # ROBUST MULTI-ALIAS IPO DATE HELPER
@@ -2288,7 +79,6 @@ def clean_tv_date_col(val_series):
   dt_iso = pd.to_datetime(val_series, errors="coerce")
   dt_combined = dt_unix.fillna(dt_iso)
   return dt_combined.where(dt_combined >= pd.Timestamp("1980-01-01"), pd.NaT)
-
 
 def add_clean_ipo_date_col(df):
   ipo_cols = [
@@ -2312,7 +102,6 @@ def add_clean_ipo_date_col(df):
   df["IPO Date"] = df["IPO_Date_DT"].dt.strftime("%Y-%m-%d").fillna("N/A")
   return df
 
-
 # ==========================================
 # 2. BACKEND API QUERIES
 # ==========================================
@@ -2329,7 +118,6 @@ SALES_Q_ALIASES = [
     "revenue_yoy_growth_quarterly",
     "sales_yoy_growth_fq",
 ]
-
 
 def fetch_screener_data(
     exchanges, min_mcap, vol_period_days, ma_columns_to_fetch, limit_rows
@@ -2390,7 +178,6 @@ def fetch_screener_data(
   except Exception as e:
     st.error(f"Error fetching data from TradingView API: {e}")
     return pd.DataFrame()
-
 
 def fetch_watchlist_enrichMENT(symbol_list):
   if not symbol_list:
@@ -2470,7 +257,6 @@ def fetch_watchlist_enrichMENT(symbol_list):
     return df
   except Exception:
     return pd.DataFrame()
-
 
 # ==========================================
 # 3. SIDEBAR CONTROLS & STRATEGY PRESETS
@@ -3099,11 +885,6 @@ with tab_screener:
     )
     nse_bands_map = get_nse_circuit_bands()
 
-    # ==========================================
-    # AUTHENTIC IBD-STYLE RS RATING CALCULATION (1-99)
-    # Reverted to full 4,000+ stock universe baseline before filters
-    # Formula: 2 * Perf.3M + Perf.6M + Perf.Y
-    # ==========================================
     if not results_df.empty:
       p_3m = pd.to_numeric(results_df.get("Perf.3M"), errors="coerce").fillna(0)
       p_6m = pd.to_numeric(results_df.get("Perf.6M"), errors="coerce").fillna(0)
@@ -3115,7 +896,6 @@ with tab_screener:
           (rs_pct * 98 + 1).round().fillna(1).astype(int)
       )
 
-      # Store in Session State for Watchlist & Tradebook Studio lookup
       st.session_state.rs_rating_map = dict(
           zip(results_df["name"].str.upper(), results_df["RS Rating"])
       )
@@ -3156,7 +936,6 @@ with tab_screener:
       df["Index"] = "N/A"
 
     if index_choice:
-
       def matches_index(val):
         if pd.isna(val) or val == "N/A" or not val:
           return False
@@ -3165,12 +944,8 @@ with tab_screener:
           if idx_name.upper() in val_str:
             return True
         return False
-
       df = df[df["Index"].apply(matches_index)]
 
-    # ----------------------------------------------------
-    # QUARTERLY YOY GROWTH COALESCING & FILTERING
-    # ----------------------------------------------------
     df["EPS Q YoY %"] = coalesce_columns(df, EPS_Q_ALIASES).round(2)
     df["Sales Q YoY %"] = coalesce_columns(df, SALES_Q_ALIASES).round(2)
 
@@ -3188,15 +963,9 @@ with tab_screener:
       else:
         df = df[df["Sales Q YoY %"] >= min_sales_q]
 
-    # ----------------------------------------------------
-    # IBD RS RATING FILTERING
-    # ----------------------------------------------------
     if en_rs_rating and "RS Rating" in df.columns:
       df = df[df["RS Rating"] >= min_rs_rating]
 
-    # ----------------------------------------------------
-    # ROBUST MULTI-ALIAS IPO DATE PARSING
-    # ----------------------------------------------------
     df = add_clean_ipo_date_col(df)
 
     if en_ipo and ipo_filter_choice != "All Stocks (No IPO Filter)":
@@ -3277,9 +1046,6 @@ with tab_screener:
         df[pf["col_name"]] = pd.to_numeric(df[pf["col_name"]], errors="coerce")
         df = df[df[pf["col_name"]] >= pf["min_val"]]
 
-    # ----------------------------------------------------
-    # HYBRID CIRCUIT LIMIT EXCLUSION
-    # ----------------------------------------------------
     if en_circuit and circuit_choice:
       df["high"] = pd.to_numeric(df["high"], errors="coerce")
       df["low"] = pd.to_numeric(df["low"], errors="coerce")
@@ -3471,7 +1237,6 @@ with tab_screener:
             sel_ind_table if sel_ind_table else sel_ind_chart
         )
 
-      # SAVE ACTIVE SCAN SUMMARY FOR AI SITUATIONAL AWARENESS ENGINE
       st.session_state.active_scan_summary = {
           "total_passed": total_passed,
           "sectors": sec_counts.head(10).to_dict(orient="records"),
@@ -3659,9 +1424,6 @@ with tab_screener:
           table_ev_scan, df_display, "TV_Symbol"
       )
 
-      # ----------------------------------------------------
-      # 🧠 CHECKBOX-DRIVEN FUNDAMENTAL ANALYST (SCAN TAB)
-      # ----------------------------------------------------
       st.markdown("---")
       f_col1, f_col2, f_col3 = st.columns([2.0, 1.3, 1.7])
 
@@ -4169,7 +1931,6 @@ with tab_watchlists:
         ~merged_df["_is_circuit_badge"], merged_df["name"] + " 🚨"
     )
 
-    # MAP AUTHENTIC IBD RS RATING FROM SESSION STATE LOOKUP
     rs_map = st.session_state.get("rs_rating_map", {})
     merged_df["RS Rating"] = (
         merged_df["name"]
@@ -4179,7 +1940,6 @@ with tab_watchlists:
         .fillna("N/A")
     )
 
-    # ATTACH PERSISTENT FUNDAMENTAL REPORT BADGE COLUMN
     merged_df["Fundamental"] = (
         merged_df["name"]
         .str.replace(" 🚨", "")
@@ -4241,9 +2001,6 @@ with tab_watchlists:
         wl_table_event, merged_df, "TV_Symbol"
     )
 
-    # ----------------------------------------------------
-    # 🧠 CHECKBOX-DRIVEN FUNDAMENTAL ANALYST (WATCHLIST TAB)
-    # ----------------------------------------------------
     st.markdown("---")
     wf_col1, wf_col2, wf_col3 = st.columns([2.0, 1.3, 1.7])
 
@@ -4424,10 +2181,8 @@ with tab_tradebook:
   starting_cap = float(tb_data.get("config", {}).get("starting_capital", 500000.0))
   all_trades = tb_data.get("trades", [])
 
-  # Load market monitor for Nifty 500 benchmark lookup
   df_mm_tb = load_market_monitor_data()
 
-  # Enrich open trades with live prices from TV or Watchlist map
   open_trade_tickers = [
       t["ticker"] for t in all_trades if t.get("status") == "OPEN"
   ]
@@ -4439,7 +2194,6 @@ with tab_tradebook:
           zip(enriched_tb["name"].str.upper(), enriched_tb["Close"])
       )
 
-  # Calculate Cash, Portfolio Values, and Risk Metrics
   cash_balance = starting_cap
   realized_pnl_total = 0.0
   unrealized_pnl_total = 0.0
@@ -4447,7 +2201,6 @@ with tab_tradebook:
   open_current_val_total = 0.0
   open_risk_total = 0.0
 
-  # Benchmark Shadow Portfolio Variables
   bench_bought_total = 0.0
   bench_current_val_total = 0.0
   trades_beating_bench = 0
@@ -4460,8 +2213,6 @@ with tab_tradebook:
   )
 
   processed_trade_rows = []
-
-  # Unique Signature Logic for S.No. & Total Setup Counts
   trade_signatures = {}
   sig_counter = 1
 
@@ -4489,7 +2240,6 @@ with tab_tradebook:
     sl_num_shared = trade_signatures[sig]
 
     unit_risk = max(0.01, b_price - sl_price)
-    risk_1r_initial = sh_bought * unit_risk
 
     nifty_buy_close = float(
         tr.get(
@@ -4521,7 +2271,6 @@ with tab_tradebook:
 
       cash_balance -= capital_invested
 
-      # Shadow Benchmark calculation for Open Lot
       bench_val = (
           capital_invested * (latest_nifty_close / nifty_buy_close)
           if nifty_buy_close > 0
@@ -4558,7 +2307,7 @@ with tab_tradebook:
       unrealized_pnl = 0.0
 
       realized_pnl_total += realized_pnl
-      cash_balance += (booked_val - capital_invested)  # Net Cash Adjustment
+      cash_balance += (booked_val - capital_invested)
 
       nifty_sell_close = float(
           tr.get(
@@ -4631,7 +2380,6 @@ with tab_tradebook:
       (open_risk_total / max(total_portfolio_nav, 1.0)) * 100
   )
 
-  # Shadow Portfolio Alpha vs Nifty 500
   bench_total_nav = cash_balance + bench_current_val_total
   alpha_inr = total_portfolio_nav - bench_total_nav
   portfolio_net_return_pct = (
@@ -4680,7 +2428,6 @@ with tab_tradebook:
     )
     st.metric("Portfolio Heat %", f"{portfolio_heat_pct:.2f}%", heat_color)
 
-  # --- BENCHMARK ALPHA CARD ---
   st.markdown("---")
   st.caption("🏆 **Nifty 500 Shadow Benchmark Comparison (Dollar-Weighted):**")
   ac1, ac2, ac3, ac4 = st.columns(4)
@@ -4700,7 +2447,40 @@ with tab_tradebook:
 
   st.markdown("---")
 
-  # Dialog Modals for Buy / Sell / Config / Edit
+  ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4, ctrl_col5 = st.columns([1.2, 1.2, 1.2, 1.2, 2.0])
+  with ctrl_col5:
+    tb_filter = st.radio(
+        "Display Filter:",
+        options=["All Positions", "Open Positions Only", "Closed Trades Only"],
+        horizontal=True,
+    )
+
+  df_tb_display = pd.DataFrame(processed_trade_rows)
+
+  if not df_tb_display.empty:
+    if tb_filter == "Open Positions Only":
+      df_tb_display = df_tb_display[
+          df_tb_display["Status"].str.contains("OPEN")
+      ]
+    elif tb_filter == "Closed Trades Only":
+      df_tb_display = df_tb_display[
+          df_tb_display["Status"].str.contains("WIN|LOSS|SCRATCH")
+      ]
+
+    if total_portfolio_nav > 0:
+      df_tb_display["Allocation %"] = df_tb_display["Current Value (₹)"].apply(
+          lambda v: (v / total_portfolio_nav) * 100 if v > 0 else 0.0
+      )
+    else:
+      df_tb_display["Allocation %"] = 0.0
+
+  tb_selected_rows = st.session_state.get("tb_manage_table", {}).get("selection", {}).get("rows", [])
+  selected_trade_id = None
+  if tb_selected_rows and len(tb_selected_rows) > 0 and not df_tb_display.empty:
+    row_idx = tb_selected_rows[0]
+    if row_idx < len(df_tb_display):
+      selected_trade_id = df_tb_display.iloc[row_idx]["trade_id"]
+
   @st.dialog("➕ Log New Position Entry", width="medium")
   def show_buy_modal():
     active_wl = st.session_state.get(
@@ -4768,7 +2548,7 @@ with tab_tradebook:
           st.rerun()
 
   @st.dialog("➖ Log Exit or Partial Sell", width="medium")
-  def show_sell_modal():
+  def show_sell_modal(preselected_trade_id=None):
     open_lots = [
         t
         for t in st.session_state.tradebook["trades"]
@@ -4785,8 +2565,16 @@ with tab_tradebook:
         ): t
         for t in open_lots
     }
+    
+    default_index = 0
+    if preselected_trade_id:
+        for i, (lbl, t) in enumerate(lot_options.items()):
+            if t.get("id") == preselected_trade_id:
+                default_index = i
+                break
+
     sel_label = st.selectbox(
-        "Select Active Position Lot to Sell:", options=list(lot_options.keys())
+        "Select Active Position Lot to Sell:", options=list(lot_options.keys()), index=default_index
     )
     sel_lot = lot_options[sel_label]
 
@@ -4806,14 +2594,12 @@ with tab_tradebook:
         nifty_close_sell = fetch_nifty500_close_on_date(date_s_str, df_mm_tb)
 
         if s_shares == max_sell:
-          # Full Exit
           sel_lot["status"] = "CLOSED"
           sel_lot["shares_sold"] += s_shares
           sel_lot["sell_price"] = float(s_price)
           sel_lot["date_sold"] = date_s_str
           sel_lot["nifty500_sell_close"] = nifty_close_sell
         else:
-          # Partial Exit: Split into 1 Closed Lot and 1 Open Lot
           closed_split_lot = {
               "id": f"TRD_{int(time.time()*1000)}",
               "ticker": sel_lot["ticker"],
@@ -4836,46 +2622,44 @@ with tab_tradebook:
         st.rerun()
 
   @st.dialog("✏️ Edit or Delete Trade", width="medium")
-  def show_edit_modal():
-    if not st.session_state.tradebook["trades"]:
-      st.info("No trades to edit.")
+  def show_edit_modal(trade_id):
+    idx = next((i for i, t in enumerate(st.session_state.tradebook["trades"]) if t.get("id") == trade_id), None)
+    if idx is None:
+      st.error("Trade not found.")
       return
 
-    trade_opts = {}
-    for i, tr in enumerate(st.session_state.tradebook["trades"]):
-      stat = tr.get("status", "OPEN")
-      tick = tr.get("ticker", "")
-      sh_b = tr.get("shares_bought", 0)
-      sh_s = tr.get("shares_sold", 0)
-      bp = tr.get("buy_price", 0)
-      lbl = f"[{stat}] {tick} | Bought {sh_b} shs @ ₹{bp} | Sold {sh_s} shs"
-      trade_opts[lbl] = i
-
-    sel_lbl = st.selectbox("Select Trade to Edit/Delete:", list(trade_opts.keys()))
-    idx = trade_opts[sel_lbl]
     sel_tr = st.session_state.tradebook["trades"][idx]
+    stat = sel_tr.get("status", "OPEN")
+    tick = sel_tr.get("ticker", "")
+    sh_b = sel_tr.get("shares_bought", 0)
+    sh_s = sel_tr.get("shares_sold", 0)
+    bp = sel_tr.get("buy_price", 0.0)
 
+    st.markdown(f"**Selected Trade:** `{tick}` | Bought {sh_b} shs @ ₹{bp}")
     st.markdown("---")
+
     with st.form("edit_trade_form"):
       e_status = st.selectbox(
-          "Status", ["OPEN", "CLOSED"], index=0 if sel_tr.get("status") == "OPEN" else 1
+          "Status", ["OPEN", "CLOSED"], index=0 if stat == "OPEN" else 1
       )
-      e_tick = st.text_input("Ticker", sel_tr.get("ticker", ""))
+      e_tick = st.text_input("Ticker", tick)
       c1, c2 = st.columns(2)
       with c1:
-        e_sh_b = st.number_input("Shares Bought", value=int(sel_tr.get("shares_bought", 0)))
-        e_bp = st.number_input("Buy Price", value=float(sel_tr.get("buy_price", 0.0)))
-        e_db = st.date_input("Date Bought", pd.to_datetime(sel_tr.get("date_bought", date.today())))
-        e_sl = st.number_input("Initial SL", value=float(sel_tr.get("initial_sl", 0.0)))
+        e_sh_b = st.number_input("Shares Bought", min_value=1, value=int(sh_b))
+        e_bp = st.number_input("Buy Price", min_value=0.01, value=float(bp))
+        try:
+            e_db_val = pd.to_datetime(sel_tr.get("date_bought")).date()
+        except:
+            e_db_val = date.today()
+        e_db = st.date_input("Date Bought", e_db_val)
+        e_sl = st.number_input("Initial SL", min_value=0.00, value=float(sel_tr.get("initial_sl", 0.0)))
       with c2:
-        e_sh_s = st.number_input("Shares Sold", value=int(sel_tr.get("shares_sold", 0)))
-        e_sp = st.number_input("Sell Price", value=float(sel_tr.get("sell_price", 0.0)))
-        
-        e_ds_val = (
-            pd.to_datetime(sel_tr.get("date_sold"))
-            if sel_tr.get("date_sold") and sel_tr.get("date_sold") != "N/A"
-            else date.today()
-        )
+        e_sh_s = st.number_input("Shares Sold", min_value=0, value=int(sh_s))
+        e_sp = st.number_input("Sell Price", min_value=0.0, value=float(sel_tr.get("sell_price", 0.0)))
+        try:
+            e_ds_val = pd.to_datetime(sel_tr.get("date_sold")).date() if sel_tr.get("date_sold") and sel_tr.get("date_sold") != "N/A" else date.today()
+        except:
+            e_ds_val = date.today()
         e_ds = st.date_input("Date Sold", e_ds_val)
 
       col_upd, col_del = st.columns(2)
@@ -4904,7 +2688,6 @@ with tab_tradebook:
         st.success("Trade deleted successfully!")
         st.rerun()
 
-
   @st.dialog("⚙️ Configure Account Capital", width="small")
   def show_config_modal():
     with st.form("config_capital_form"):
@@ -4920,53 +2703,25 @@ with tab_tradebook:
         st.success("Config updated!")
         st.rerun()
 
-  # Action Buttons Bar
-  ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4, ctrl_col5 = st.columns([1.2, 1.2, 1.2, 1.2, 2.0])
   with ctrl_col1:
     if st.button("➕ Log New Buy", type="primary", use_container_width=True):
       show_buy_modal()
   with ctrl_col2:
-    if st.button("➖ Log Exit / Sell", type="secondary", use_container_width=True):
-      show_sell_modal()
+    if st.button("➖ Log Exit / Sell", type="secondary", use_container_width=True, disabled=(not selected_trade_id and open_count == 0)):
+      show_sell_modal(selected_trade_id)
   with ctrl_col3:
-    if st.button("✏️ Edit / Delete", type="secondary", use_container_width=True):
-      show_edit_modal()
+    if st.button("✏️ Edit / Delete", type="secondary", use_container_width=True, disabled=not selected_trade_id):
+      show_edit_modal(selected_trade_id)
   with ctrl_col4:
     if st.button("⚙️ Config Capital", type="secondary", use_container_width=True):
       show_config_modal()
-  with ctrl_col5:
-    tb_filter = st.radio(
-        "Display Filter:",
-        options=["All Positions", "Open Positions Only", "Closed Trades Only"],
-        horizontal=True,
-    )
-
-  # Filter Processed Trade Rows for Display
-  df_tb_display = pd.DataFrame(processed_trade_rows)
 
   if df_tb_display.empty:
     st.info(
-        "Your Tradebook is empty! Click **'➕ Log New Buy'** above to record your"
+        "Your Tradebook is empty or no trades match the selected filter! Click **'➕ Log New Buy'** above to record your"
         " first position."
     )
   else:
-    if tb_filter == "Open Positions Only":
-      df_tb_display = df_tb_display[
-          df_tb_display["Status"].str.contains("OPEN")
-      ]
-    elif tb_filter == "Closed Trades Only":
-      df_tb_display = df_tb_display[
-          df_tb_display["Status"].str.contains("WIN|LOSS|SCRATCH")
-      ]
-
-    # Calculate Allocation % dynamically for Open Positions
-    if total_portfolio_nav > 0:
-      df_tb_display["Allocation %"] = df_tb_display["Current Value (₹)"].apply(
-          lambda v: (v / total_portfolio_nav) * 100 if v > 0 else 0.0
-      )
-    else:
-      df_tb_display["Allocation %"] = 0.0
-
     tb_table_columns = [
         "S.No._num",
         "Ticker",
@@ -4995,16 +2750,17 @@ with tab_tradebook:
         use_container_width=True,
         hide_index=True,
         height=400,
+        on_select="rerun",
+        selection_mode="single-row",
         column_config=get_left_aligned_column_config(tb_table_columns),
+        key="tb_manage_table"
     )
 
-    # --- BOTTOM INSTITUTIONAL PERFORMANCE & PAYOFF ANALYTICS GRID ---
     st.markdown("---")
     st.subheader("📊 Elite Risk Management & Performance Analytics")
 
     closed_lots = [
-        t
-        for t in processed_trade_rows
+        t for t in processed_trade_rows
         if "WIN" in str(t.get("Status", "")) or "LOSS" in str(t.get("Status", "")) or "SCRATCH" in str(t.get("Status", ""))
     ]
     total_closed = len(closed_lots)
@@ -5049,7 +2805,6 @@ with tab_tradebook:
           avg_win_pct / avg_loss_pct if avg_loss_pct > 0 else avg_win_pct
       )
 
-      # Holding Days Asymmetry
       def calc_days(t):
         try:
           d1 = datetime.strptime(t["Date Bought"], "%Y-%m-%d")
@@ -5065,7 +2820,6 @@ with tab_tradebook:
           sum(calc_days(t) for t in losses) / loss_count if loss_count > 0 else 0
       )
 
-      # Progressive Exposure Streak Tracker
       streak_count = 0
       last_outcome = None
       for t in reversed(closed_lots):
@@ -5131,107 +2885,143 @@ with tab_tradebook:
     # ==========================================
     st.markdown("---")
     st.subheader("📅 Trading Performance Calendar & Weekly Ledger")
-    st.caption(
-        "Tracks Daily and Weekly Realized Gain / Loss (₹) and Number of"
-        " Closed Trades."
-    )
+    st.caption("Tracks Daily and Weekly Realized Gain / Loss (₹) and Number of Closed Trades.")
 
     if total_closed == 0:
-      st.info(
-          "No closed trades available to generate the Trading Calendar yet."
-          " Once you close positions, daily and weekly ledgers will appear"
-          " here."
-      )
+      st.info("No closed trades available to generate the Trading Calendar yet.")
     else:
       df_closed_cal = pd.DataFrame(closed_lots)
-      df_closed_cal["Date_DT"] = pd.to_datetime(
-          df_closed_cal["Date Sold"], errors="coerce"
-      )
-      df_closed_cal = df_closed_cal.dropna(subset=["Date_DT"]).sort_values(
-          by="Date_DT", ascending=False
-      )
+      df_closed_cal["Date_DT"] = pd.to_datetime(df_closed_cal["Date Sold"], errors="coerce")
+      df_closed_cal = df_closed_cal.dropna(subset=["Date_DT"]).sort_values(by="Date_DT", ascending=False)
 
-      # 1. DAILY CALENDAR AGGREGATE
       daily_agg = (
           df_closed_cal.groupby(df_closed_cal["Date_DT"].dt.strftime("%Y-%m-%d"))
           .agg(
               Trades=("Ticker", "count"),
               Realised_Gains=("Realised Gains (₹)", "sum"),
-              Wins=(
-                  "Realised Gains (₹)",
-                  lambda s: (s > 0).sum(),
-              ),
+              Wins=("Realised Gains (₹)", lambda s: (s > 0).sum()),
           )
           .reset_index()
       )
-      daily_agg.columns = [
-          "Date Sold",
-          "Trades",
-          "Realised Gains (₹)",
-          "Wins",
-      ]
-      daily_agg["Win Rate %"] = (
-          (daily_agg["Wins"] / daily_agg["Trades"].clip(lower=1)) * 100
-      ).round(1)
-      daily_agg["Day"] = (
-          pd.to_datetime(daily_agg["Date Sold"]).dt.day_name().str[:3]
-      )
+      daily_agg.columns = ["Date Sold", "Trades", "Realised Gains (₹)", "Wins"]
+      
+      # FIX: Use .clip(lower=1) instead of max() which causes ValueError on Series
+      daily_agg["Win Rate %"] = ((daily_agg["Wins"] / daily_agg["Trades"].clip(lower=1)) * 100).round(1)
+      daily_agg["Day"] = pd.to_datetime(daily_agg["Date Sold"]).dt.day_name().str[:3]
       daily_agg["Status"] = daily_agg["Realised Gains (₹)"].apply(
           lambda v: "🔵 +₹" + f"{v:,.0f}" if v > 0 else "🔴 -₹" + f"{abs(v):,.0f}"
       )
 
-      daily_display_cols = [
-          "Date Sold",
-          "Day",
-          "Trades",
-          "Realised Gains (₹)",
-          "Win Rate %",
-          "Status",
-      ]
+      daily_display_cols = ["Date Sold", "Day", "Trades", "Realised Gains (₹)", "Win Rate %", "Status"]
 
-      # 2. WEEKLY PERFORMANCE MATRIX
-      df_closed_cal["ISO_Week"] = df_closed_cal["Date_DT"].dt.strftime(
-          "%Y-W%V"
-      )
+      df_closed_cal["ISO_Week"] = df_closed_cal["Date_DT"].dt.strftime("%Y-W%V")
       weekly_agg = (
           df_closed_cal.groupby("ISO_Week")
           .agg(
               Trades=("Ticker", "count"),
               Realised_Gains=("Realised Gains (₹)", "sum"),
-              Wins=(
-                  "Realised Gains (₹)",
-                  lambda s: (s > 0).sum(),
-              ),
+              Wins=("Realised Gains (₹)", lambda s: (s > 0).sum()),
           )
           .reset_index()
       )
-      weekly_agg.columns = [
-          "ISO Week",
-          "Trades",
-          "Realised Gains (₹)",
-          "Wins",
-      ]
-      weekly_agg["Win Rate %"] = (
-          (weekly_agg["Wins"] / weekly_agg["Trades"].clip(lower=1)) * 100
-      ).round(1)
+      weekly_agg.columns = ["ISO Week", "Trades", "Realised Gains (₹)", "Wins"]
+      weekly_agg["Win Rate %"] = ((weekly_agg["Wins"] / weekly_agg["Trades"].clip(lower=1)) * 100).round(1)
       weekly_agg["Status"] = weekly_agg["Realised Gains (₹)"].apply(
           lambda v: "🔵 GREEN WEEK" if v > 0 else "🔴 RED WEEK"
       )
       weekly_agg = weekly_agg.sort_values(by="ISO Week", ascending=False)
 
-      weekly_display_cols = [
-          "ISO Week",
-          "Trades",
-          "Realised Gains (₹)",
-          "Win Rate %",
-          "Status",
-      ]
+      weekly_display_cols = ["ISO Week", "Trades", "Realised Gains (₹)", "Win Rate %", "Status"]
 
-      tab_day_cal, tab_week_cal = st.tabs(
-          ["📅 Daily P&L Calendar", "🗓️ Weekly Performance Matrix"]
-      )
+      # VISUAL GRID CALENDAR IMPLEMENTATION
+      import calendar
+      
+      # Find the most recent month from our trades
+      recent_dt = pd.to_datetime(daily_agg["Date Sold"].max())
+      cal_year = recent_dt.year
+      cal_month = recent_dt.month
+      month_name = calendar.month_name[cal_month]
+      
+      st.markdown(f"#### {month_name} {cal_year}")
+      
+      # Build dictionary of days to P&L mapping
+      day_map = {}
+      for _, row in daily_agg.iterrows():
+          d_obj = pd.to_datetime(row["Date Sold"])
+          if d_obj.year == cal_year and d_obj.month == cal_month:
+              day_map[d_obj.day] = {
+                  "trades": row["Trades"],
+                  "pnl": row["Realised Gains (₹)"]
+              }
+      
+      # HTML/CSS Grid Generator
+      cal_html = """
+      <style>
+      .cal-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; margin-bottom: 20px; }
+      .cal-header { font-weight: bold; text-align: center; padding: 10px; color: #E0E2EC; border-bottom: 2px solid #2B2F3E; }
+      .cal-cell { border: 1px solid #2B2F3E; border-radius: 6px; padding: 10px; min-height: 90px; display: flex; flex-direction: column; justify-content: space-between; background-color: #1E222D; }
+      .cal-cell-empty { border: none; background-color: transparent; }
+      .cal-day { font-size: 13px; color: #888; text-align: right; margin-bottom: 5px; }
+      .cal-val-win { color: #63BE7B; font-weight: bold; font-size: 16px; }
+      .cal-val-loss { color: #F8696B; font-weight: bold; font-size: 16px; }
+      .cal-val-neu { color: #E0E2EC; font-size: 16px; font-weight: bold;}
+      .cal-trades { font-size: 12px; color: #888; margin-top: 5px; }
+      .cal-week-tot { background-color: #243447; border-color: #3B4B61; text-align: center; }
+      </style>
+      <div class="cal-grid">
+          <div class="cal-header">Sun</div><div class="cal-header">Mon</div><div class="cal-header">Tue</div>
+          <div class="cal-header">Wed</div><div class="cal-header">Thu</div><div class="cal-header">Fri</div>
+          <div class="cal-header">Sat</div><div class="cal-header">Week Total</div>
+      """
+      
+      cal_matrix = calendar.monthcalendar(cal_year, cal_month)
+      week_num = 1
+      for week in cal_matrix:
+          week_pnl = 0.0
+          week_trades = 0
+          for day in week:
+              if day == 0:
+                  cal_html += '<div class="cal-cell-empty"></div>'
+              else:
+                  data = day_map.get(day, {"trades": 0, "pnl": 0.0})
+                  pnl = data["pnl"]
+                  trades = data["trades"]
+                  week_pnl += pnl
+                  week_trades += trades
+                  
+                  val_class = "cal-val-neu"
+                  if pnl > 0: val_class = "cal-val-win"
+                  elif pnl < 0: val_class = "cal-val-loss"
+                  
+                  pnl_str = f"₹{pnl:,.0f}" if pnl == 0 else (f"+₹{pnl:,.0f}" if pnl > 0 else f"-₹{abs(pnl):,.0f}")
+                  
+                  cal_html += f"""
+                  <div class="cal-cell">
+                      <div class="cal-day">{day}</div>
+                      <div class="{val_class}">{pnl_str}</div>
+                      <div class="cal-trades">{trades} trades</div>
+                  </div>
+                  """
+          # Week Total Column
+          tot_class = "cal-val-neu"
+          if week_pnl > 0: tot_class = "cal-val-win"
+          elif week_pnl < 0: tot_class = "cal-val-loss"
+          tot_pnl_str = f"₹{week_pnl:,.0f}" if week_pnl == 0 else (f"+₹{week_pnl:,.0f}" if week_pnl > 0 else f"-₹{abs(week_pnl):,.0f}")
+          
+          cal_html += f"""
+          <div class="cal-cell cal-week-tot">
+              <div class="cal-day">Week {week_num}</div>
+              <div class="{tot_class}" style="text-align: center; margin-top: auto;">{tot_pnl_str}</div>
+              <div class="cal-trades" style="text-align: center;">{week_trades} trades</div>
+          </div>
+          """
+          week_num += 1
+          
+      cal_html += "</div>"
+      st.markdown(cal_html, unsafe_allow_html=True)
 
-      with tab_day_cal:
+      tab_day_tb, tab_week_tb = st.tabs(["📅 Daily Ledger Table", "🗓️ Weekly Matrix Table"])
+      with tab_day_tb:
         st.dataframe(
             daily_agg[daily_display_cols],
             use_container_width=True,
@@ -5239,8 +3029,7 @@ with tab_tradebook:
             height=280,
             column_config=get_left_aligned_column_config(daily_display_cols),
         )
-
-      with tab_week_cal:
+      with tab_week_tb:
         st.dataframe(
             weekly_agg[weekly_display_cols],
             use_container_width=True,
@@ -5269,9 +3058,6 @@ with tab_market_health:
   df_mm = load_market_monitor_data()
   df_heat, df_rot = load_sector_monitor_data()
 
-  # ------------------------------------------
-  # SUB-TAB 4A: DAILY AI SITUATIONAL AWARENESS BRIEFING
-  # ------------------------------------------
   with tab_ai_intel:
     st.subheader("🧠 Daily Market & Sector Situational Awareness")
     st.caption(
@@ -5284,7 +3070,6 @@ with tab_market_health:
     latest_briefing = st.session_state.market_briefings.get(today_str)
 
     b_col1, b_col2 = st.columns([1.8, 1.2])
-
     with b_col1:
       if latest_briefing:
         st.success(f"✅ Active Briefing Loaded for Date: **{today_str}**")
@@ -5293,7 +3078,6 @@ with tab_market_health:
             f"No AI Briefing generated for **{today_str}** yet. Click the button"
             " on the right to synthesize today's data!"
         )
-
     with b_col2:
       run_briefing_btn = st.button(
           "🔄 Generate / Refresh Today's AI Briefing Now",
@@ -5335,15 +3119,11 @@ with tab_market_health:
           use_container_width=True,
       )
 
-  # ------------------------------------------
-  # SUB-TAB 4B: NSE MARKET MONITOR
-  # ------------------------------------------
   with tab_mm:
     if not df_mm.empty:
       st.markdown(
           f"#### 📊 Nifty Total Market Breadth & VCP Indicators ({len(df_mm)} Days)"
       )
-
       latest = df_mm.iloc[0] if len(df_mm) > 0 else {}
       c1, c2, c3, c4 = st.columns(4)
       with c1:
@@ -5353,102 +3133,33 @@ with tab_market_health:
             f"{latest.get('Nifty 500 Chg %', 0)}%",
         )
       with c2:
-        st.metric(
-            "5-Day Thrust Ratio", f"{latest.get('5 Day Ratio', 'N/A')}"
-        )
+        st.metric("5-Day Thrust Ratio", f"{latest.get('5 Day Ratio', 'N/A')}")
       with c3:
-        st.metric(
-            "10-Day Thrust Ratio", f"{latest.get('10 Day Ratio', 'N/A')}"
-        )
+        st.metric("10-Day Thrust Ratio", f"{latest.get('10 Day Ratio', 'N/A')}")
       with c4:
         st.metric("A/D Ratio", f"{latest.get('A/D Ratio', 'N/A')}")
-
       styled_mm = style_market_monitor(df_mm)
       st.table(styled_mm)
     else:
-      st.info(
-          "Market Monitor data not available yet. If your repo is Private,"
-          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
-          " App Settings -> Secrets."
-      )
-      if st.button(
-          "🔄 Retry Fetching Market Monitor Now",
-          key="retry_mm_btn",
-          type="primary",
-      ):
-        load_market_monitor_data.clear()
-        st.rerun()
+      st.info("Market Monitor data not available yet.")
 
-  # ------------------------------------------
-  # SUB-TAB 4C: SECTOR RS HEATMAP
-  # ------------------------------------------
   with tab_sector_heat:
     if not df_heat.empty:
-      st.markdown(
-          "#### 🔥 27-Sector CAN SLIM Relative Strength Heatmap (Ranked by 65D RS)"
-      )
+      st.markdown("#### 🔥 27-Sector CAN SLIM Relative Strength Heatmap (Ranked by 65D RS)")
       st.caption(
           "💡 **Velocity Legend:** Positive (+) values indicate upward rank"
           " acceleration; Negative (-) indicate loss of relative momentum."
       )
-
       styled_heat = style_sector_heatmap(df_heat)
       st.table(styled_heat)
     else:
-      st.info(
-          "Sector Heatmap data not available yet. If your repo is Private,"
-          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
-          " App Settings -> Secrets."
-      )
-      if st.button(
-          "🔄 Retry Fetching Sector Data Now",
-          key="retry_sec_btn",
-          type="primary",
-      ):
-        load_sector_monitor_data.clear()
-        st.rerun()
+      st.info("Sector Heatmap data not available yet.")
 
-  # ------------------------------------------
-  # SUB-TAB 4D: HISTORICAL ROTATION TRACKER
-  # ------------------------------------------
   with tab_sector_rot:
     if not df_rot.empty:
-      st.markdown(
-          "#### 📊 65-Day Historical Relative Strength Ranks (All Sectors)"
-      )
-      st.caption(
-          "💡 Rank 1 = Strongest Relative Strength vs. Nifty 500 Benchmark"
-          " (`^CRSLDX`)."
-      )
-
+      st.markdown("#### 📊 65-Day Historical Relative Strength Ranks (All Sectors)")
+      st.caption("💡 Rank 1 = Strongest Relative Strength vs. Nifty 500 Benchmark (`^CRSLDX`).")
       styled_rot = style_rotation_tracker(df_rot)
       st.table(styled_rot)
     else:
-      st.info(
-          "Rotation Tracker data not available yet. If your repo is Private,"
-          " ensure `GITHUB_TOKEN = 'ghp_...'` is added in your Streamlit Cloud"
-          " App Settings -> Secrets."
-      )
-      if st.button(
-          "🔄 Retry Fetching Rotation Data Now",
-          key="retry_rot_btn",
-          type="primary",
-      ):
-        load_sector_monitor_data.clear()
-        st.rerun()
-
-  st.markdown("---")
-  with st.expander(
-      "⚡ Optional: Force Real-Time Scan Now (Bypass Daily Schedule)"
-  ):
-    st.caption(
-        "Your scheduled cronjob automatically pushes updated Excel files to"
-        " GitHub every weekday. Click below only if you want to force an"
-        " immediate intraday refresh of Streamlit's data cache."
-    )
-    if st.button(
-        "🔄 Clear Streamlit Data Cache & Reload", type="secondary"
-    ):
-      st.cache_data.clear()
-      st.success("✅ Data cache cleared! Reloading latest tables...")
-      st.rerun()
+      st.info("Rotation Tracker data not available yet.")
