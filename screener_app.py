@@ -13,6 +13,7 @@ import markdown
 import plotly.express as px
 import requests
 import pandas as pd
+import numpy as np
 import streamlit as st
 from tradingview_screener import Query, col
 
@@ -1715,9 +1716,11 @@ def get_left_aligned_column_config(col_list):
       cfg[col] = st.column_config.Column(col, alignment="left", width=135)
     elif col == "name":
       cfg[col] = st.column_config.Column(col, alignment="left", width=140)
-    elif col in ["RS Rating", "Status"]:
-      cfg[col] = st.column_config.Column(col, alignment="left", width=95)
-    elif col in ["Date", "Sector", "Date Bought", "Date Sold"]:
+    elif col == "RS Rating":
+      cfg[col] = st.column_config.NumberColumn(
+          "RS Rating", alignment="left", format="%d", width=95
+      )
+    elif col in ["Date", "Sector", "Date Bought", "Date Sold", "Status"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=130)
     elif col == "Fundamental":
       cfg[col] = st.column_config.Column(col, alignment="left", width=155)
@@ -1749,9 +1752,9 @@ def get_left_aligned_column_config(col_list):
         "Total Return (₹)",
     ]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=140)
-    elif col in ["Abs Return %", "Allocation %", "Realized R", "Win Rate %"]:
+    elif col in ["Abs Return %", "Allocation %", "Realized R", "Win Rate %", "Day"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=110)
-    elif col in ["Stocks Passed", "Trades"]:
+    elif col in ["Stocks Passed", "Trades", "Wins", "ISO Week"]:
       cfg[col] = st.column_config.Column(col, alignment="left", width=115)
     elif col == "% Share":
       cfg[col] = st.column_config.Column(col, alignment="left", width=90)
@@ -4458,6 +4461,17 @@ with tab_tradebook:
 
   processed_trade_rows = []
 
+  # Unique Signature Logic for S.No. & Total Setup Counts
+  trade_signatures = {}
+  sig_counter = 1
+
+  # Assign SL Nos to unique combinations
+  for tr in all_trades:
+    sig = f"{tr.get('ticker')}_{tr.get('date_bought')}_{tr.get('buy_price')}"
+    if sig not in trade_signatures:
+      trade_signatures[sig] = sig_counter
+      sig_counter += 1
+
   for idx, tr in enumerate(all_trades, 1):
     status = tr.get("status", "OPEN")
     ticker = tr.get("ticker", "N/A")
@@ -4470,6 +4484,9 @@ with tab_tradebook:
     b_price = float(tr.get("buy_price", 0.0))
     sl_price = float(tr.get("initial_sl", b_price * 0.92))
     date_b = tr.get("date_bought", "N/A")
+
+    sig = f"{ticker}_{date_b}_{b_price}"
+    sl_num_shared = trade_signatures[sig]
 
     unit_risk = max(0.01, b_price - sl_price)
     risk_1r_initial = sh_bought * unit_risk
@@ -4526,6 +4543,7 @@ with tab_tradebook:
       evaluated_bench_trades += 1
 
       realized_r = 0.0
+      status_label = "🟢 OPEN"
 
     else:  # CLOSED LOT
       sold_price = float(tr.get("sell_price", b_price))
@@ -4572,6 +4590,13 @@ with tab_tradebook:
           realized_pnl / (sh_sold * unit_risk) if (sh_sold * unit_risk) > 0 else 0.0
       )
 
+      if realized_pnl > 0:
+        status_label = "🔵 WIN"
+      elif realized_pnl < 0:
+        status_label = "🔴 LOSS"
+      else:
+        status_label = "⚪ SCRATCH"
+
     tot_return_inr = realized_pnl + unrealized_pnl
     abs_return_pct = (
         ((curr_price - b_price) / b_price) * 100 if b_price > 0 else 0.0
@@ -4579,13 +4604,10 @@ with tab_tradebook:
 
     processed_trade_rows.append({
         "trade_id": tr.get("id"),
-        "S.No._num": idx,
+        "S.No._num": sl_num_shared,
+        "Signature": sig,
         "Ticker": ticker,
-        "Status": (
-            "🟢 OPEN"
-            if status == "OPEN"
-            else "🔴 CLOSED" if realized_pnl < 0 else "🟢 CLOSED"
-        ),
+        "Status": status_label,
         "Shares Bought": sh_bought,
         "Date Bought": date_b,
         "Buy Price (₹)": b_price,
@@ -4678,7 +4700,7 @@ with tab_tradebook:
 
   st.markdown("---")
 
-  # Dialog Modals for Buy / Sell / Config
+  # Dialog Modals for Buy / Sell / Config / Edit
   @st.dialog("➕ Log New Position Entry", width="medium")
   def show_buy_modal():
     active_wl = st.session_state.get(
@@ -4813,6 +4835,76 @@ with tab_tradebook:
         st.success(f"✅ Executed exit for **{sel_lot['ticker']}**!")
         st.rerun()
 
+  @st.dialog("✏️ Edit or Delete Trade", width="medium")
+  def show_edit_modal():
+    if not st.session_state.tradebook["trades"]:
+      st.info("No trades to edit.")
+      return
+
+    trade_opts = {}
+    for i, tr in enumerate(st.session_state.tradebook["trades"]):
+      stat = tr.get("status", "OPEN")
+      tick = tr.get("ticker", "")
+      sh_b = tr.get("shares_bought", 0)
+      sh_s = tr.get("shares_sold", 0)
+      bp = tr.get("buy_price", 0)
+      lbl = f"[{stat}] {tick} | Bought {sh_b} shs @ ₹{bp} | Sold {sh_s} shs"
+      trade_opts[lbl] = i
+
+    sel_lbl = st.selectbox("Select Trade to Edit/Delete:", list(trade_opts.keys()))
+    idx = trade_opts[sel_lbl]
+    sel_tr = st.session_state.tradebook["trades"][idx]
+
+    st.markdown("---")
+    with st.form("edit_trade_form"):
+      e_status = st.selectbox(
+          "Status", ["OPEN", "CLOSED"], index=0 if sel_tr.get("status") == "OPEN" else 1
+      )
+      e_tick = st.text_input("Ticker", sel_tr.get("ticker", ""))
+      c1, c2 = st.columns(2)
+      with c1:
+        e_sh_b = st.number_input("Shares Bought", value=int(sel_tr.get("shares_bought", 0)))
+        e_bp = st.number_input("Buy Price", value=float(sel_tr.get("buy_price", 0.0)))
+        e_db = st.date_input("Date Bought", pd.to_datetime(sel_tr.get("date_bought", date.today())))
+        e_sl = st.number_input("Initial SL", value=float(sel_tr.get("initial_sl", 0.0)))
+      with c2:
+        e_sh_s = st.number_input("Shares Sold", value=int(sel_tr.get("shares_sold", 0)))
+        e_sp = st.number_input("Sell Price", value=float(sel_tr.get("sell_price", 0.0)))
+        
+        e_ds_val = (
+            pd.to_datetime(sel_tr.get("date_sold"))
+            if sel_tr.get("date_sold") and sel_tr.get("date_sold") != "N/A"
+            else date.today()
+        )
+        e_ds = st.date_input("Date Sold", e_ds_val)
+
+      col_upd, col_del = st.columns(2)
+      with col_upd:
+        submit_upd = st.form_submit_button("💾 Update Trade", use_container_width=True)
+      with col_del:
+        submit_del = st.form_submit_button("🗑️ Delete Trade", use_container_width=True)
+
+      if submit_upd:
+        sel_tr["status"] = e_status
+        sel_tr["ticker"] = e_tick
+        sel_tr["shares_bought"] = e_sh_b
+        sel_tr["buy_price"] = e_bp
+        sel_tr["date_bought"] = e_db.strftime("%Y-%m-%d")
+        sel_tr["initial_sl"] = e_sl
+        sel_tr["shares_sold"] = e_sh_s
+        sel_tr["sell_price"] = e_sp
+        sel_tr["date_sold"] = e_ds.strftime("%Y-%m-%d") if e_status == "CLOSED" else "N/A"
+        save_tradebook(st.session_state.tradebook)
+        st.success("Trade updated successfully!")
+        st.rerun()
+
+      if submit_del:
+        st.session_state.tradebook["trades"].pop(idx)
+        save_tradebook(st.session_state.tradebook)
+        st.success("Trade deleted successfully!")
+        st.rerun()
+
+
   @st.dialog("⚙️ Configure Account Capital", width="small")
   def show_config_modal():
     with st.form("config_capital_form"):
@@ -4829,7 +4921,7 @@ with tab_tradebook:
         st.rerun()
 
   # Action Buttons Bar
-  ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([1.5, 1.5, 1.5, 2.5])
+  ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4, ctrl_col5 = st.columns([1.2, 1.2, 1.2, 1.2, 2.0])
   with ctrl_col1:
     if st.button("➕ Log New Buy", type="primary", use_container_width=True):
       show_buy_modal()
@@ -4837,9 +4929,12 @@ with tab_tradebook:
     if st.button("➖ Log Exit / Sell", type="secondary", use_container_width=True):
       show_sell_modal()
   with ctrl_col3:
+    if st.button("✏️ Edit / Delete", type="secondary", use_container_width=True):
+      show_edit_modal()
+  with ctrl_col4:
     if st.button("⚙️ Config Capital", type="secondary", use_container_width=True):
       show_config_modal()
-  with ctrl_col4:
+  with ctrl_col5:
     tb_filter = st.radio(
         "Display Filter:",
         options=["All Positions", "Open Positions Only", "Closed Trades Only"],
@@ -4861,7 +4956,7 @@ with tab_tradebook:
       ]
     elif tb_filter == "Closed Trades Only":
       df_tb_display = df_tb_display[
-          df_tb_display["Status"].str.contains("CLOSED")
+          df_tb_display["Status"].str.contains("WIN|LOSS|SCRATCH")
       ]
 
     # Calculate Allocation % dynamically for Open Positions
@@ -4910,16 +5005,12 @@ with tab_tradebook:
     closed_lots = [
         t
         for t in processed_trade_rows
-        if "CLOSED" in str(t.get("Status", ""))
+        if "WIN" in str(t.get("Status", "")) or "LOSS" in str(t.get("Status", "")) or "SCRATCH" in str(t.get("Status", ""))
     ]
     total_closed = len(closed_lots)
-    open_count = len(
-        [
-            t
-            for t in processed_trade_rows
-            if "OPEN" in str(t.get("Status", ""))
-        ]
-    )
+    
+    unique_setups = len(trade_signatures)
+    active_setups = len(set(t["Signature"] for t in processed_trade_rows if "OPEN" in t["Status"]))
 
     if total_closed > 0:
       wins = [t for t in closed_lots if t["Realised Gains (₹)"] > 0]
@@ -5002,9 +5093,9 @@ with tab_tradebook:
     k1, k2, k3, k4, k5 = st.columns(5)
     with k1:
       st.metric(
-          "Total / Live Trades",
-          f"{total_closed + open_count}",
-          f"Active Open: {open_count}",
+          "Total Setups Logged",
+          f"{unique_setups}",
+          f"Live / Active: {active_setups}",
       )
     with k2:
       st.metric("Win Rate %", f"{win_rate:.1f}%", f"{win_count}W / {loss_count}L")
@@ -5080,13 +5171,13 @@ with tab_tradebook:
           "Wins",
       ]
       daily_agg["Win Rate %"] = (
-          (daily_agg["Wins"] / max(daily_agg["Trades"], 1)) * 100
+          (daily_agg["Wins"] / daily_agg["Trades"].clip(lower=1)) * 100
       ).round(1)
       daily_agg["Day"] = (
           pd.to_datetime(daily_agg["Date Sold"]).dt.day_name().str[:3]
       )
       daily_agg["Status"] = daily_agg["Realised Gains (₹)"].apply(
-          lambda v: "🟢 +₹" + f"{v:,.0f}" if v > 0 else "🔴 -₹" + f"{abs(v):,.0f}"
+          lambda v: "🔵 +₹" + f"{v:,.0f}" if v > 0 else "🔴 -₹" + f"{abs(v):,.0f}"
       )
 
       daily_display_cols = [
@@ -5121,10 +5212,10 @@ with tab_tradebook:
           "Wins",
       ]
       weekly_agg["Win Rate %"] = (
-          (weekly_agg["Wins"] / max(weekly_agg["Trades"], 1)) * 100
+          (weekly_agg["Wins"] / weekly_agg["Trades"].clip(lower=1)) * 100
       ).round(1)
       weekly_agg["Status"] = weekly_agg["Realised Gains (₹)"].apply(
-          lambda v: "🟢 GREEN WEEK" if v > 0 else "🔴 RED WEEK"
+          lambda v: "🔵 GREEN WEEK" if v > 0 else "🔴 RED WEEK"
       )
       weekly_agg = weekly_agg.sort_values(by="ISO Week", ascending=False)
 
